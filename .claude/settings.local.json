@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(copy \"dist\\\\icon.webp\" \"icon.webp\")",
+      "Bash(cmd.exe /c \"copy D:\\\\AI-drink-water\\\\dist\\\\icon.webp D:\\\\AI-drink-water\\\\icon.webp\")",
+      "Bash(cmd.exe /c \"if exist D:\\\\AI-drink-water\\\\icon.webp \\(echo icon.webp exists\\) else \\(echo icon.webp not found\\)\")",
+      "Bash(python:*)",
+      "Bash(cmd.exe /c \"del /f /q \\\\?\\\\D:\\\\AI-drink-water\\\\nul\")"
+    ]
+  }
+}

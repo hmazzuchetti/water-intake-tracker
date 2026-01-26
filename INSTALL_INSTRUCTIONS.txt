@@ -1,0 +1,49 @@
+==========================================
+  Water Intake Tracker - Installation Guide
+==========================================
+
+IMPORTANT: Windows Security Warning
+-----------------------------------
+When you first run this app, Windows may show a blue warning screen
+saying "Windows protected your PC". This is normal for any new software
+that doesn't have an expensive code signing certificate.
+
+To run the app:
+
+METHOD 1 (Easiest):
+  1. Right-click on WaterIntakeTracker.exe
+  2. Click "Properties"
+  3. At the bottom, check the box "Unblock"
+  4. Click "OK"
+  5. Now double-click to run normally
+
+METHOD 2 (When you see the blue screen):
+  1. Click "More info" (small text link)
+  2. Click "Run anyway"
+
+------------------------------------------
+
+REQUIREMENTS:
+  - Windows 10 or 11
+  - A webcam (built-in or USB)
+
+FIRST RUN:
+  - The app will show a setup screen
+  - Select your webcam from the dropdown
+  - Click "Test Camera" to verify it works
+  - Adjust settings as needed
+  - Click "Save & Start"
+
+HOW IT WORKS:
+  - The app uses your webcam to detect when you drink water
+  - A progress bar shows your daily intake
+  - Hold a cup/bottle and bring it to your mouth to register a drink
+  - Right-click the progress bar for options
+
+TIPS:
+  - If detection isn't working, try enabling "Require cup/bottle"
+  - Select your dominant drinking hand for better accuracy
+  - Double-click the progress bar to undo accidental detections
+
+------------------------------------------
+Questions? Contact: [your email here]

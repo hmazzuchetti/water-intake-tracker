@@ -1,0 +1,33 @@
+# Windows reserved name file
+nul
+
+# Large files
+*.rar
+*.zip
+*.exe
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller
+*.manifest
+*.log
+
+# User config (contains personal settings)
+user_config.json
+
+# Models (downloaded on first run)
+models/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+Thumbs.db
+.DS_Store
