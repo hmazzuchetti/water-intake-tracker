@@ -6,6 +6,7 @@ Detects water drinking via webcam and shows progress overlay.
 
 import sys
 import os
+import time
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer
 
@@ -14,6 +15,8 @@ from storage import Storage
 from detector import WaterGulpDetector
 from ui import ProgressBarOverlay
 from settings_ui import show_settings, load_user_config, save_user_config
+from ai_messages import AIMessageGenerator
+from message_bubble import MessageBubbleManager
 
 
 def get_resource_path(relative_path):
@@ -117,6 +120,12 @@ class WaterTrackerApp:
         self.detector_thread = None
         self.overlay = None
 
+        # AI Messages
+        self.ai_generator = None
+        self.message_manager = None
+        self.message_timer = None
+        self.last_message_time = 0
+
     def _show_initial_settings(self) -> bool:
         """Show settings dialog on every startup for webcam verification"""
         existing_config = load_user_config()
@@ -143,6 +152,12 @@ class WaterTrackerApp:
 
         ml_total, goal_ml, percentage = self.storage.get_progress()
         print(f"Progress: {ml_total}ml / {goal_ml}ml ({percentage:.1f}%)")
+
+        # Maybe show a message on milestone
+        if self.config.get("ai_messages_enabled", True):
+            # Show message on 50% and 100%
+            if percentage >= 100 or (percentage >= 50 and percentage < 55):
+                self._show_ai_message()
 
     def _on_detector_error(self, error_msg: str):
         """Handle detector errors"""
@@ -208,6 +223,74 @@ class WaterTrackerApp:
         self.detector_thread.error_occurred.connect(self._on_detector_error)
         self.detector_thread.start()
 
+    def _init_ai_messages(self):
+        """Initialize AI message system"""
+        if not self.config.get("ai_messages_enabled", True):
+            print("[AI] Mensagens desabilitadas")
+            return
+
+        try:
+            # Initialize AI generator
+            personality_file = self.config.get("ai_personality_file", "personalities/default.txt")
+            self.ai_generator = AIMessageGenerator(personality_file)
+
+            # Initialize message manager
+            self.message_manager = MessageBubbleManager()
+
+            # Setup timer for random messages
+            interval_minutes = self.config.get("ai_message_interval_minutes", 45)
+            self.message_timer = QTimer()
+            self.message_timer.timeout.connect(self._on_message_timer)
+            self.message_timer.start(interval_minutes * 60 * 1000)  # Convert to ms
+
+            self.last_message_time = time.time()
+
+            print(f"[AI] Sistema de mensagens inicializado (intervalo: {interval_minutes} min)")
+
+        except Exception as e:
+            print(f"[AI] Erro ao inicializar sistema de mensagens: {e}")
+
+    def _show_ai_message(self):
+        """Generate and show an AI message"""
+        if not self.message_manager or not self.ai_generator:
+            return
+
+        # Don't show if there's already a bubble
+        if self.message_manager.has_active_bubble():
+            return
+
+        try:
+            # Get current status
+            ml_total, goal_ml, percentage = self.storage.get_progress()
+
+            # Calculate minutes since last gulp
+            if hasattr(self.overlay, 'last_gulp_time'):
+                minutes_since = int((time.time() - self.overlay.last_gulp_time) / 60)
+            else:
+                minutes_since = 0
+
+            # Generate message with type
+            message, message_type = self.ai_generator.generate_message(ml_total, goal_ml, minutes_since)
+
+            # Show bubble with appropriate sound
+            duration_seconds = self.config.get("ai_message_duration_seconds", 8)
+            self.message_manager.show_message(message, duration_seconds * 1000, message_type)
+
+            self.last_message_time = time.time()
+
+            print(f"[AI] Mensagem ({message_type}): \"{message}\"")
+
+        except Exception as e:
+            print(f"[AI] Erro ao gerar mensagem: {e}")
+
+    def _on_message_timer(self):
+        """Handle random message timer"""
+        # Only show messages when user is present
+        if hasattr(self.overlay, 'is_away') and self.overlay.is_away:
+            return
+
+        self._show_ai_message()
+
     def run(self):
         """Start the application"""
         print("=" * 50)
@@ -245,6 +328,9 @@ class WaterTrackerApp:
         self.detector_thread.away_changed.connect(self.overlay.set_away)
         self.detector_thread.error_occurred.connect(self._on_detector_error)
         self.detector_thread.start()
+
+        # Initialize AI messages
+        self._init_ai_messages()
 
         print("Application running. Close the overlay or press Ctrl+C to exit.")
         print("Right-click the progress bar for options.")

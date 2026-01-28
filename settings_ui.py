@@ -8,13 +8,15 @@ import os
 import json
 import winreg
 import cv2
+import glob
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QSpinBox, QComboBox, QCheckBox, QPushButton,
-    QGroupBox, QFrame, QMessageBox, QTabWidget, QWidget, QTextBrowser
+    QGroupBox, QFrame, QMessageBox, QTabWidget, QWidget, QTextBrowser,
+    QPlainTextEdit, QFileDialog, QScrollArea
 )
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont, QIcon, QPixmap
 
 from config import CONFIG
 
@@ -94,7 +96,10 @@ def save_user_config(config: dict) -> bool:
         "camera_index", "away_timeout_seconds", "hover_opacity",
         "reminder_interval_minutes", "reminder_bar_width",
         "reminder_shake_threshold", "start_with_windows", "first_run",
-        "require_cup"
+        "require_cup",
+        # AI and Mascot settings
+        "ai_messages_enabled", "ai_ollama_model", "ai_message_interval_minutes",
+        "ai_personality_file", "mascot_enabled", "mascot_file", "mascot_size"
     ]
 
     to_save = {k: config[k] for k in saveable_keys if k in config}
@@ -209,6 +214,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._create_general_tab(), "General")
         tabs.addTab(self._create_detection_tab(), "Detection")
         tabs.addTab(self._create_reminder_tab(), "Reminder")
+        tabs.addTab(self._create_mascot_tab(), "Mascote & IA")
         tabs.addTab(self._create_help_tab(), "How to Use")
         layout.addWidget(tabs)
 
@@ -421,6 +427,289 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return widget
 
+    def _create_mascot_tab(self) -> QWidget:
+        """Create mascot and AI settings tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # AI Messages Group
+        ai_group = QGroupBox("Mensagens com IA")
+        ai_layout = QGridLayout(ai_group)
+
+        self.ai_enabled_check = QCheckBox("Habilitar mensagens com IA")
+        ai_layout.addWidget(self.ai_enabled_check, 0, 0, 1, 2)
+
+        ai_layout.addWidget(QLabel("Modelo Ollama:"), 1, 0)
+        self.ollama_model_combo = QComboBox()
+        self.ollama_model_combo.setEditable(True)
+        self.ollama_model_combo.addItems([
+            "llama3.2:1b",
+            "llama3.2:3b",
+            "llama3.1:latest",
+            "mistral:latest",
+            "phi3:mini",
+            "gemma2:2b",
+        ])
+        ai_layout.addWidget(self.ollama_model_combo, 1, 1)
+
+        ai_layout.addWidget(QLabel("Intervalo mensagens:"), 2, 0)
+        self.ai_interval_spin = QSpinBox()
+        self.ai_interval_spin.setRange(1, 120)
+        self.ai_interval_spin.setSuffix(" min")
+        ai_layout.addWidget(self.ai_interval_spin, 2, 1)
+
+        layout.addWidget(ai_group)
+
+        # Personality Group
+        personality_group = QGroupBox("Personalidade")
+        personality_layout = QVBoxLayout(personality_group)
+
+        # Personality selector
+        selector_layout = QHBoxLayout()
+        selector_layout.addWidget(QLabel("Personalidade:"))
+        self.personality_combo = QComboBox()
+        self._populate_personalities()
+        self.personality_combo.currentIndexChanged.connect(self._on_personality_changed)
+        selector_layout.addWidget(self.personality_combo, 1)
+
+        self.new_personality_btn = QPushButton("Nova")
+        self.new_personality_btn.setMaximumWidth(60)
+        self.new_personality_btn.clicked.connect(self._create_new_personality)
+        selector_layout.addWidget(self.new_personality_btn)
+        personality_layout.addLayout(selector_layout)
+
+        # Personality editor
+        self.personality_edit = QPlainTextEdit()
+        self.personality_edit.setPlaceholderText("Escreva as instruções de personalidade para a IA...")
+        self.personality_edit.setMinimumHeight(120)
+        self.personality_edit.setMaximumHeight(180)
+        personality_layout.addWidget(self.personality_edit)
+
+        # Save button
+        save_personality_btn = QPushButton("💾 Salvar Personalidade")
+        save_personality_btn.clicked.connect(self._save_personality)
+        personality_layout.addWidget(save_personality_btn)
+
+        layout.addWidget(personality_group)
+
+        # Mascot Group
+        mascot_group = QGroupBox("Mascote")
+        mascot_layout = QGridLayout(mascot_group)
+
+        self.mascot_enabled_check = QCheckBox("Mostrar mascote com mensagens")
+        mascot_layout.addWidget(self.mascot_enabled_check, 0, 0, 1, 2)
+
+        mascot_layout.addWidget(QLabel("Mascote atual:"), 1, 0)
+
+        # Mascot preview and selector
+        mascot_preview_layout = QHBoxLayout()
+
+        self.mascot_preview = QLabel()
+        self.mascot_preview.setFixedSize(80, 80)
+        self.mascot_preview.setStyleSheet("border: 1px solid #ccc; background: #f5f5f5;")
+        self.mascot_preview.setAlignment(Qt.AlignCenter)
+        mascot_preview_layout.addWidget(self.mascot_preview)
+
+        mascot_buttons = QVBoxLayout()
+        self.mascot_combo = QComboBox()
+        self._populate_mascots()
+        self.mascot_combo.currentIndexChanged.connect(self._on_mascot_changed)
+        mascot_buttons.addWidget(self.mascot_combo)
+
+        browse_mascot_btn = QPushButton("📁 Escolher arquivo...")
+        browse_mascot_btn.clicked.connect(self._browse_mascot)
+        mascot_buttons.addWidget(browse_mascot_btn)
+        mascot_preview_layout.addLayout(mascot_buttons)
+        mascot_preview_layout.addStretch()
+
+        mascot_layout.addLayout(mascot_preview_layout, 1, 1)
+
+        mascot_layout.addWidget(QLabel("Tamanho:"), 2, 0)
+        self.mascot_size_spin = QSpinBox()
+        self.mascot_size_spin.setRange(50, 400)
+        self.mascot_size_spin.setSuffix(" px")
+        mascot_layout.addWidget(self.mascot_size_spin, 2, 1)
+
+        layout.addWidget(mascot_group)
+
+        layout.addStretch()
+        return widget
+
+    def _populate_personalities(self):
+        """Populate personality combo with available files"""
+        self.personality_combo.clear()
+
+        # Ensure directory exists
+        os.makedirs("personalities", exist_ok=True)
+
+        # Find all .txt files in personalities folder
+        personality_files = glob.glob("personalities/*.txt")
+
+        if not personality_files:
+            # Create default if none exist
+            self.personality_combo.addItem("default", "personalities/default.txt")
+        else:
+            for filepath in sorted(personality_files):
+                name = os.path.splitext(os.path.basename(filepath))[0]
+                display_name = name.replace("_", " ").title()
+                self.personality_combo.addItem(display_name, filepath)
+
+    def _on_personality_changed(self, index):
+        """Load selected personality into editor"""
+        filepath = self.personality_combo.currentData()
+        if filepath and os.path.exists(filepath):
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    self.personality_edit.setPlainText(f.read())
+            except Exception as e:
+                print(f"Erro ao carregar personalidade: {e}")
+
+    def _create_new_personality(self):
+        """Create a new personality file"""
+        from PyQt5.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(
+            self, "Nova Personalidade",
+            "Nome da personalidade (sem espaços ou acentos):"
+        )
+
+        if ok and name:
+            # Sanitize name
+            safe_name = "".join(c for c in name if c.isalnum() or c == "_").lower()
+            if not safe_name:
+                safe_name = "nova"
+
+            filepath = f"personalities/{safe_name}.txt"
+
+            # Check if exists
+            if os.path.exists(filepath):
+                QMessageBox.warning(self, "Erro", f"Já existe uma personalidade com esse nome!")
+                return
+
+            # Create file with template
+            template = """Você é um assistente que ajuda o usuário a se manter hidratado.
+
+ESTILO:
+- Descreva o tom e estilo das mensagens aqui
+- Seja breve (máximo 1-2 frases)
+- Use emojis ocasionalmente
+
+EXEMPLOS DE TOM:
+- "Exemplo de mensagem 1"
+- "Exemplo de mensagem 2"
+
+IMPORTANTE:
+- NÃO use formatação Markdown
+- Retorne APENAS a mensagem, nada mais
+- Máximo de 100 caracteres
+"""
+            try:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(template)
+
+                # Refresh combo and select new
+                self._populate_personalities()
+                for i in range(self.personality_combo.count()):
+                    if self.personality_combo.itemData(i) == filepath:
+                        self.personality_combo.setCurrentIndex(i)
+                        break
+
+                QMessageBox.information(self, "Sucesso", f"Personalidade '{safe_name}' criada!")
+
+            except Exception as e:
+                QMessageBox.warning(self, "Erro", f"Erro ao criar arquivo: {e}")
+
+    def _save_personality(self):
+        """Save current personality text to file"""
+        filepath = self.personality_combo.currentData()
+        if not filepath:
+            QMessageBox.warning(self, "Erro", "Nenhuma personalidade selecionada!")
+            return
+
+        text = self.personality_edit.toPlainText()
+        if not text.strip():
+            QMessageBox.warning(self, "Erro", "O texto da personalidade não pode estar vazio!")
+            return
+
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(text)
+            QMessageBox.information(self, "Salvo!", f"Personalidade salva em:\n{filepath}")
+        except Exception as e:
+            QMessageBox.warning(self, "Erro", f"Erro ao salvar: {e}")
+
+    def _populate_mascots(self):
+        """Populate mascot combo with available images"""
+        self.mascot_combo.clear()
+
+        # Ensure directory exists
+        os.makedirs("mascots", exist_ok=True)
+
+        # Find image files
+        mascot_files = []
+        for ext in ['*.png', '*.jpg', '*.jpeg', '*.gif']:
+            mascot_files.extend(glob.glob(f"mascots/{ext}"))
+
+        if not mascot_files:
+            self.mascot_combo.addItem("(nenhum mascote)", "")
+        else:
+            for filepath in sorted(mascot_files):
+                name = os.path.splitext(os.path.basename(filepath))[0]
+                display_name = name.replace("_", " ").title()
+                self.mascot_combo.addItem(display_name, filepath)
+
+    def _on_mascot_changed(self, index):
+        """Update mascot preview"""
+        filepath = self.mascot_combo.currentData()
+        self._update_mascot_preview(filepath)
+
+    def _update_mascot_preview(self, filepath):
+        """Update the mascot preview image"""
+        if filepath and os.path.exists(filepath):
+            pixmap = QPixmap(filepath)
+            if not pixmap.isNull():
+                scaled = pixmap.scaled(
+                    76, 76,
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation
+                )
+                self.mascot_preview.setPixmap(scaled)
+                return
+
+        self.mascot_preview.setText("🐸")
+        self.mascot_preview.setStyleSheet(
+            "border: 1px solid #ccc; background: #f5f5f5; font-size: 32px;"
+        )
+
+    def _browse_mascot(self):
+        """Open file dialog to select custom mascot"""
+        filepath, _ = QFileDialog.getOpenFileName(
+            self,
+            "Escolher Mascote",
+            "mascots/",
+            "Imagens (*.png *.jpg *.jpeg *.gif)"
+        )
+
+        if filepath:
+            # Copy to mascots folder if not already there
+            if not filepath.startswith("mascots"):
+                import shutil
+                filename = os.path.basename(filepath)
+                dest = f"mascots/{filename}"
+                try:
+                    shutil.copy2(filepath, dest)
+                    filepath = dest
+                except Exception as e:
+                    QMessageBox.warning(self, "Erro", f"Erro ao copiar arquivo: {e}")
+                    return
+
+            # Refresh and select
+            self._populate_mascots()
+            for i in range(self.mascot_combo.count()):
+                if self.mascot_combo.itemData(i) == filepath:
+                    self.mascot_combo.setCurrentIndex(i)
+                    break
+
     def _create_help_tab(self) -> QWidget:
         """Create help/tutorial tab"""
         widget = QWidget()
@@ -555,6 +844,36 @@ class SettingsDialog(QDialog):
 
         self.require_cup_check.setChecked(self.config.get("require_cup", True))
 
+        # AI and Mascot settings
+        self.ai_enabled_check.setChecked(self.config.get("ai_messages_enabled", True))
+        self.ai_interval_spin.setValue(self.config.get("ai_message_interval_minutes", 45))
+        self.mascot_enabled_check.setChecked(self.config.get("mascot_enabled", True))
+        self.mascot_size_spin.setValue(self.config.get("mascot_size", 150))
+
+        # Set Ollama model
+        model = self.config.get("ai_ollama_model", "llama3.2:1b")
+        idx = self.ollama_model_combo.findText(model)
+        if idx >= 0:
+            self.ollama_model_combo.setCurrentIndex(idx)
+        else:
+            self.ollama_model_combo.setCurrentText(model)
+
+        # Set personality
+        personality_file = self.config.get("ai_personality_file", "personalities/default.txt")
+        for i in range(self.personality_combo.count()):
+            if self.personality_combo.itemData(i) == personality_file:
+                self.personality_combo.setCurrentIndex(i)
+                break
+        self._on_personality_changed(0)  # Load text
+
+        # Set mascot
+        mascot_file = self.config.get("mascot_file", "mascots/default.png")
+        for i in range(self.mascot_combo.count()):
+            if self.mascot_combo.itemData(i) == mascot_file:
+                self.mascot_combo.setCurrentIndex(i)
+                break
+        self._update_mascot_preview(mascot_file)
+
     def _save_and_accept(self):
         """Save settings and close dialog"""
         # Validate camera selection
@@ -589,6 +908,15 @@ class SettingsDialog(QDialog):
         self.config["reminder_bar_width"] = self.reminder_width_spin.value()
 
         self.config["require_cup"] = self.require_cup_check.isChecked()
+
+        # AI and Mascot settings
+        self.config["ai_messages_enabled"] = self.ai_enabled_check.isChecked()
+        self.config["ai_ollama_model"] = self.ollama_model_combo.currentText()
+        self.config["ai_message_interval_minutes"] = self.ai_interval_spin.value()
+        self.config["ai_personality_file"] = self.personality_combo.currentData() or "personalities/default.txt"
+        self.config["mascot_enabled"] = self.mascot_enabled_check.isChecked()
+        self.config["mascot_file"] = self.mascot_combo.currentData() or "mascots/default.png"
+        self.config["mascot_size"] = self.mascot_size_spin.value()
 
         self.config["first_run"] = False
         self.config["start_with_windows"] = self.start_windows_check.isChecked()

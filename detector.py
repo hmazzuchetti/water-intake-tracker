@@ -79,6 +79,15 @@ class WaterGulpDetector:
         self.drinking_hand = CONFIG.get("drinking_hand", "both").lower()  # "right", "left", or "both"
         self.require_cup = CONFIG.get("require_cup", True)  # Require cup/bottle detection
 
+        # Detection sensitivity
+        sensitivity = CONFIG.get("detection_sensitivity", "medium").lower()
+        if sensitivity == "easy":
+            self.criteria_required = 2  # 2 de 4 critérios (mais fácil)
+        elif sensitivity == "strict":
+            self.criteria_required = 4  # 4 de 4 critérios (muito difícil)
+        else:  # medium
+            self.criteria_required = 3  # 3 de 4 critérios (padrão)
+
         # Cup detection state
         self.last_cup_detection = None  # Stores last detected cup bounding box
 
@@ -144,7 +153,7 @@ class WaterGulpDetector:
             base_options=python.BaseOptions(model_asset_path=self.object_model_path),
             running_mode=vision.RunningMode.IMAGE,
             max_results=5,
-            score_threshold=0.3  # Lower threshold to catch more cups
+            score_threshold=0.25  # Threshold baixo para pegar garrafas com menos certeza
         )
         self.object_detector = vision.ObjectDetector.create_from_options(object_options)
 
@@ -527,12 +536,14 @@ class WaterGulpDetector:
             self.consecutive_frames = max(0, self.consecutive_frames - 1)
             return False, debug_info
 
-        # Require at least 3 of 4 criteria for more robust detection
+        # Check detection criteria based on sensitivity
         criteria_met = sum([is_close, is_holding, is_drinking, upward_motion])
 
-        if criteria_met >= 3 and is_close:  # Must be close + 2 other criteria
+        if criteria_met >= self.criteria_required and is_close:  # Must be close + outros critérios
             self.consecutive_frames += 1
             debug_info["consecutive_frames"] = self.consecutive_frames
+            debug_info["criteria_required"] = self.criteria_required
+            debug_info["criteria_met"] = criteria_met
 
             # Check if we have enough consecutive frames AND cooldown has passed
             if self.consecutive_frames >= self.frames_to_confirm:
