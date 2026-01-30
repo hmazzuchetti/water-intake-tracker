@@ -357,6 +357,16 @@ class WaterTrackerApp:
 
 def main():
     """Entry point"""
+    # Ensure working directory is the application directory
+    # This fixes issues when starting with Windows (startup shortcut)
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        app_dir = os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+    os.chdir(app_dir)
+
     try:
         app = WaterTrackerApp()
         sys.exit(app.run())
