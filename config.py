@@ -20,6 +20,7 @@ CONFIG = {
     "drinking_hand": "right",   # Which hand to track: "right", "left", or "both"
     "require_cup": True,        # Require cup/bottle detection for gulp detection
     "detection_sensitivity": "medium",  # "easy", "medium", or "strict" - quantos critérios precisa
+    "bottle_cache_seconds": 5,  # Tempo que a garrafa fica "em memória" após detectada (resolve problema da garrafa virada)
 
     # Other settings
     "sound_enabled": True,

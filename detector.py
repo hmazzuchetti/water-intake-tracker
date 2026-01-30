@@ -91,6 +91,13 @@ class WaterGulpDetector:
         # Cup detection state
         self.last_cup_detection = None  # Stores last detected cup bounding box
 
+        # Bottle cache - mantém garrafa "em memória" por alguns segundos
+        # Resolve o problema da garrafa virada não ser detectada durante o gole
+        self.bottle_cache_timeout = CONFIG.get("bottle_cache_seconds", 5)
+        self.bottle_cache_time = 0  # Timestamp de quando a garrafa foi detectada
+        self.bottle_cache_position = None  # Posição normalizada da garrafa {x, y, width, height}
+        self.bottle_cache_class = None  # Tipo do objeto (bottle, cup, etc)
+
         # Models directory - check bundled path first, then local
         bundled_models = get_resource_path("models")
         local_models = "models"
@@ -389,6 +396,62 @@ class WaterGulpDetector:
 
         return None
 
+    def _update_bottle_cache(self, vessel: dict):
+        """
+        Salva a garrafa no cache quando detectada.
+        Isso permite que o gole seja detectado mesmo quando a garrafa
+        está virada (e não é mais reconhecida visualmente).
+        """
+        self.bottle_cache_time = time.time()
+        self.bottle_cache_position = vessel["bbox"].copy()
+        self.bottle_cache_class = vessel["class"]
+
+    def _is_bottle_in_cache(self) -> bool:
+        """Verifica se há uma garrafa válida no cache (dentro do timeout)."""
+        if self.bottle_cache_time == 0:
+            return False
+        return (time.time() - self.bottle_cache_time) < self.bottle_cache_timeout
+
+    def _is_hand_in_cached_bottle_region(self, hand_landmarks) -> bool:
+        """
+        Verifica se a mão está na região aproximada de onde a garrafa foi detectada.
+        Usa uma margem generosa porque a mão se move durante o gole.
+        """
+        if not self._is_bottle_in_cache() or self.bottle_cache_position is None:
+            return False
+
+        # Pegar bounding box da mão
+        xs = [lm.x for lm in hand_landmarks]
+        ys = [lm.y for lm in hand_landmarks]
+        hand_center_x = (min(xs) + max(xs)) / 2
+        hand_center_y = (min(ys) + max(ys)) / 2
+
+        # Posição da garrafa no cache
+        bottle = self.bottle_cache_position
+        bottle_center_x = bottle["x"] + bottle["width"] / 2
+        bottle_center_y = bottle["y"] + bottle["height"] / 2
+
+        # Margem generosa - a mão pode estar um pouco afastada da posição original
+        # porque durante o gole ela se move pra cima
+        margin = 0.25  # 25% da tela de margem
+
+        distance_x = abs(hand_center_x - bottle_center_x)
+        distance_y = abs(hand_center_y - bottle_center_y)
+
+        # A mão pode estar acima (durante o gole) ou ao lado da posição original
+        return distance_x < margin and distance_y < margin
+
+    def _get_bottle_cache_info(self) -> dict:
+        """Retorna info do cache para debug."""
+        if not self._is_bottle_in_cache():
+            return None
+        remaining = self.bottle_cache_timeout - (time.time() - self.bottle_cache_time)
+        return {
+            "class": self.bottle_cache_class,
+            "remaining_seconds": remaining,
+            "position": self.bottle_cache_position
+        }
+
     def process_frame(self) -> tuple:
         """
         Process a single frame and detect if drinking.
@@ -419,6 +482,9 @@ class WaterGulpDetector:
         # Detect drinking vessels (cups, bottles, glasses)
         vessels = self._detect_drinking_vessels(object_results, frame_width, frame_height)
 
+        # Info do cache de garrafa
+        bottle_cache_info = self._get_bottle_cache_info()
+
         debug_info = {
             "hand_detected": False,
             "face_detected": False,
@@ -432,7 +498,9 @@ class WaterGulpDetector:
             "consecutive_frames": self.consecutive_frames,
             "cooldown_remaining": max(0, self.cooldown_seconds - (self.last_gulp_time and current_time - self.last_gulp_time or 0)),
             "is_away": self.is_away,
-            "require_cup": self.require_cup
+            "require_cup": self.require_cup,
+            "bottle_cache_active": bottle_cache_info is not None,
+            "bottle_cache_info": bottle_cache_info
         }
 
         # Check for face - update away status
@@ -490,6 +558,13 @@ class WaterGulpDetector:
             # Check if hand is holding a cup
             held_cup = self._is_hand_holding_cup(hand_landmarks, vessels, frame_width, frame_height)
 
+            # Se detectou garrafa sendo segurada, atualiza o cache
+            if held_cup is not None:
+                self._update_bottle_cache(held_cup)
+
+            # Verifica se a mão está na região do cache (para quando a garrafa está virada)
+            hand_in_cache_region = self._is_hand_in_cached_bottle_region(hand_landmarks)
+
             if distance < min_distance:
                 min_distance = distance
                 best_candidate = {
@@ -498,7 +573,8 @@ class WaterGulpDetector:
                     "is_holding": is_holding,
                     "is_drinking_orientation": is_drinking_orient,
                     "palm_center": palm_center,
-                    "held_cup": held_cup
+                    "held_cup": held_cup,
+                    "hand_in_cache_region": hand_in_cache_region
                 }
 
         if best_candidate is None:
@@ -517,22 +593,29 @@ class WaterGulpDetector:
         debug_info["upward_motion"] = upward_motion
         debug_info["cup_held"] = best_candidate["held_cup"] is not None
         debug_info["held_cup_info"] = best_candidate["held_cup"]
+        debug_info["hand_in_cache_region"] = best_candidate["hand_in_cache_region"]
 
         # DRINKING DETECTION CRITERIA:
         # 1. Hand is close to mouth
         # 2. Hand is in holding pose (not single finger extended)
         # 3. Hand is in drinking orientation (tilted up)
         # 4. Hand showed upward motion recently
-        # 5. (Optional) Hand is holding a detected cup/bottle
+        # 5. (Optional) Hand is holding a detected cup/bottle OR garrafa em cache
 
         is_close = min_distance < self.proximity_threshold
         is_holding = best_candidate["is_holding"]
         is_drinking = best_candidate["is_drinking_orientation"]
-        has_cup = best_candidate["held_cup"] is not None
 
-        # If cup detection is required, hand must be holding a cup
+        # has_cup agora considera:
+        # 1. Garrafa detectada em tempo real (held_cup)
+        # 2. OU garrafa no cache + mão na região aproximada
+        has_cup_realtime = best_candidate["held_cup"] is not None
+        has_cup_from_cache = self._is_bottle_in_cache() and best_candidate["hand_in_cache_region"]
+        has_cup = has_cup_realtime or has_cup_from_cache
+
+        # If cup detection is required, hand must be holding a cup (real ou cache)
         if self.require_cup and not has_cup:
-            # No cup detected - don't count as drinking
+            # No cup detected (nem em tempo real nem no cache) - don't count as drinking
             self.consecutive_frames = max(0, self.consecutive_frames - 1)
             return False, debug_info
 
@@ -628,6 +711,26 @@ class WaterGulpDetector:
             label = f"{vessel['class'].upper()} {vessel['confidence']:.0%}"
             cv2.putText(frame, label, (x, y - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+
+        # Draw bottle cache region (se ativo e não há garrafa visível)
+        cache_info = self._get_bottle_cache_info()
+        if cache_info and not vessels:
+            # Desenha a região do cache em amarelo tracejado
+            pos = cache_info["position"]
+            x = int(pos["x"] * frame_width)
+            y = int(pos["y"] * frame_height)
+            w = int(pos["width"] * frame_width)
+            h = int(pos["height"] * frame_height)
+
+            # Retângulo tracejado amarelo para indicar cache
+            # (OpenCV não tem linha tracejada nativa, usamos cor diferente)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 2)  # Amarelo
+
+            # Label indicando que é cache
+            remaining = cache_info["remaining_seconds"]
+            cache_label = f"CACHE: {cache_info['class'].upper()} ({remaining:.1f}s)"
+            cv2.putText(frame, cache_label, (x, y - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
         # Draw hand landmarks
         if hand_results.hand_landmarks:
@@ -725,6 +828,18 @@ class WaterGulpDetector:
         mode_color = (255, 255, 0) if self.require_cup else (200, 200, 200)
         cv2.putText(frame, mode_text, (10, y_offset),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
+
+        # Bottle cache status
+        y_offset += 30
+        cache_info = self._get_bottle_cache_info()
+        if cache_info:
+            cache_text = f"Cache: {cache_info['class'].upper()} ({cache_info['remaining_seconds']:.1f}s)"
+            cache_color = (0, 255, 255)  # Amarelo brilhante
+        else:
+            cache_text = "Cache: --"
+            cache_color = (128, 128, 128)
+        cv2.putText(frame, cache_text, (10, y_offset),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, cache_color, 2)
 
         cooldown_remaining = max(0, self.cooldown_seconds - (time.time() - self.last_gulp_time))
         if cooldown_remaining > 0:

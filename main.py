@@ -7,8 +7,9 @@ Detects water drinking via webcam and shows progress overlay.
 import sys
 import os
 import time
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon, QMenu, QAction
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer
+from PyQt5.QtGui import QIcon
 
 from config import CONFIG
 from storage import Storage
@@ -114,11 +115,17 @@ class WaterTrackerApp:
 
     def __init__(self):
         self.app = QApplication(sys.argv)
+        self.app.setQuitOnLastWindowClosed(False)  # Keep running when windows close
+
         self.config = None
         self.storage = None
         self.detector = None
         self.detector_thread = None
         self.overlay = None
+
+        # System Tray
+        self.tray_icon = None
+        self.is_paused = False
 
         # AI Messages
         self.ai_generator = None
@@ -152,6 +159,9 @@ class WaterTrackerApp:
 
         ml_total, goal_ml, percentage = self.storage.get_progress()
         print(f"Progress: {ml_total}ml / {goal_ml}ml ({percentage:.1f}%)")
+
+        # Update tray tooltip
+        self._update_tray_tooltip()
 
         # Maybe show a message on milestone
         if self.config.get("ai_messages_enabled", True):
@@ -222,6 +232,143 @@ class WaterTrackerApp:
         self.detector_thread.away_changed.connect(self.overlay.set_away)
         self.detector_thread.error_occurred.connect(self._on_detector_error)
         self.detector_thread.start()
+
+    def _setup_system_tray(self):
+        """Setup system tray icon and menu"""
+        # Check if system tray is available
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            print("[Tray] System tray not available")
+            return
+
+        # Create tray icon
+        self.tray_icon = QSystemTrayIcon(self.app)
+
+        # Load icon
+        icon_path = get_resource_path("icon.ico")
+        if os.path.exists(icon_path):
+            self.tray_icon.setIcon(QIcon(icon_path))
+        else:
+            # Try PNG fallback
+            png_path = get_resource_path("icon.png")
+            if os.path.exists(png_path):
+                self.tray_icon.setIcon(QIcon(png_path))
+            else:
+                print(f"[Tray] Icon not found: {icon_path}")
+
+        # Create context menu
+        tray_menu = QMenu()
+
+        # Status action (disabled, just for info)
+        self.status_action = QAction("Water Tracker", self.app)
+        self.status_action.setEnabled(False)
+        tray_menu.addAction(self.status_action)
+
+        tray_menu.addSeparator()
+
+        # Pause/Resume action
+        self.pause_action = QAction("Pausar Detecção", self.app)
+        self.pause_action.triggered.connect(self._toggle_pause)
+        tray_menu.addAction(self.pause_action)
+
+        # Show/Hide overlay action
+        self.visibility_action = QAction("Esconder Barra", self.app)
+        self.visibility_action.triggered.connect(self._toggle_overlay_visibility)
+        tray_menu.addAction(self.visibility_action)
+
+        tray_menu.addSeparator()
+
+        # Settings action
+        settings_action = QAction("Configurações...", self.app)
+        settings_action.triggered.connect(self._open_settings)
+        tray_menu.addAction(settings_action)
+
+        tray_menu.addSeparator()
+
+        # Quit action
+        quit_action = QAction("Sair", self.app)
+        quit_action.triggered.connect(self._quit_app)
+        tray_menu.addAction(quit_action)
+
+        self.tray_icon.setContextMenu(tray_menu)
+
+        # Connect signals
+        self.tray_icon.activated.connect(self._on_tray_activated)
+
+        # Show tray icon
+        self.tray_icon.show()
+
+        # Setup tooltip update timer
+        self.tray_update_timer = QTimer()
+        self.tray_update_timer.timeout.connect(self._update_tray_tooltip)
+        self.tray_update_timer.start(30000)  # Update every 30 seconds
+        self._update_tray_tooltip()  # Initial update
+
+        print("[Tray] System tray initialized")
+
+    def _update_tray_tooltip(self):
+        """Update tray icon tooltip with current status"""
+        if not self.tray_icon or not self.storage:
+            return
+
+        ml_total, goal_ml, percentage = self.storage.get_progress()
+        glasses = self.storage.get_glasses()
+
+        status = "PAUSADO - " if self.is_paused else ""
+        tooltip = f"Water Tracker\n{status}{glasses} copos ({ml_total}ml / {goal_ml}ml)\n{percentage:.0f}% da meta"
+
+        self.tray_icon.setToolTip(tooltip)
+        self.status_action.setText(f"{glasses} copos - {percentage:.0f}%")
+
+    def _on_tray_activated(self, reason):
+        """Handle tray icon activation (click, double-click, etc)"""
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._open_settings()
+        elif reason == QSystemTrayIcon.Trigger:  # Single click
+            # Toggle overlay visibility
+            if self.overlay:
+                if self.overlay.isVisible():
+                    self.overlay.hide()
+                    self.visibility_action.setText("Mostrar Barra")
+                else:
+                    self.overlay.show()
+                    self.visibility_action.setText("Esconder Barra")
+
+    def _toggle_pause(self):
+        """Toggle detection pause state"""
+        self.is_paused = not self.is_paused
+
+        if self.is_paused:
+            # Stop detector
+            if self.detector_thread:
+                self.detector_thread.stop()
+                self.detector_thread.wait(3000)
+            if self.detector:
+                self.detector.stop_camera()
+            self.pause_action.setText("Continuar Detecção")
+            print("[Tray] Detection paused")
+        else:
+            # Restart detector
+            self._restart_detector()
+            self.pause_action.setText("Pausar Detecção")
+            print("[Tray] Detection resumed")
+
+        self._update_tray_tooltip()
+
+    def _toggle_overlay_visibility(self):
+        """Toggle overlay visibility"""
+        if self.overlay:
+            if self.overlay.isVisible():
+                self.overlay.hide()
+                self.visibility_action.setText("Mostrar Barra")
+            else:
+                self.overlay.show()
+                self.visibility_action.setText("Esconder Barra")
+
+    def _quit_app(self):
+        """Quit the application"""
+        print("[Tray] Quit requested")
+        self._shutdown()
+        self.app.quit()
 
     def _init_ai_messages(self):
         """Initialize AI message system"""
@@ -322,6 +469,9 @@ class WaterTrackerApp:
         self.overlay.settings_requested.connect(self._open_settings)
         self.overlay.show()
 
+        # Setup system tray
+        self._setup_system_tray()
+
         # Create and start detector thread
         self.detector_thread = DetectorThread(self.detector)
         self.detector_thread.gulp_detected.connect(self._on_gulp_detected)
@@ -336,6 +486,16 @@ class WaterTrackerApp:
         print("Right-click the progress bar for options.")
         print("-" * 50)
 
+        # Show startup notification
+        if self.tray_icon:
+            ml_total, goal_ml, percentage = self.storage.get_progress()
+            self.tray_icon.showMessage(
+                "Water Tracker",
+                f"Monitorando sua hidratação!\n{percentage:.0f}% da meta de hoje.",
+                QSystemTrayIcon.Information,
+                3000  # 3 seconds
+            )
+
         # Run Qt event loop
         exit_code = self.app.exec_()
 
@@ -348,6 +508,11 @@ class WaterTrackerApp:
         """Clean shutdown"""
         print("\nShutting down...")
 
+        # Hide tray icon
+        if self.tray_icon:
+            self.tray_icon.hide()
+
+        # Stop detector
         if self.detector_thread:
             self.detector_thread.stop()
             self.detector_thread.wait(5000)

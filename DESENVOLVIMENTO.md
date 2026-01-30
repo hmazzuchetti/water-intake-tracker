@@ -27,6 +27,7 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 - [ ] **Indicador de ML na barra de progresso** - Mostrar quantos ML cada seção representa para comparar com consumo real e validar precisão
 
 ### Em Refinamento
+- [✅] **System Tray** - COMPLETO!
 - [✅] **Sistema de mensagens com IA** - COMPLETO!
   - ✅ Mensagens geradas por Ollama ou fallback
   - ✅ Balão de texto flutuante com mascote
@@ -51,6 +52,107 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 - [ ] **Integração com wearables** - Conectar com apps de saúde
 
 ## Log de Desenvolvimento
+
+### 2026-01-30 - Cache Temporal de Garrafa + System Tray
+
+#### Instalador Profissional (Inno Setup)
+**Status:** ✅ COMPLETO!
+
+**O que foi criado:**
+- ✅ Script Inno Setup (`installer.iss`) - Instalador profissional Windows
+- ✅ Script de build automatizado (`build_installer.py`)
+- ✅ Documentação completa (`BUILD_INSTRUCTIONS.md`)
+
+**Funcionalidades do instalador:**
+- ✅ Instalação em Program Files (ou AppData se não for admin)
+- ✅ Entrada no Menu Iniciar com ícone
+- ✅ Ícone opcional na Área de Trabalho
+- ✅ Opção de iniciar com o Windows (startup)
+- ✅ Desinstalador pelo Painel de Controle
+- ✅ Preserva configurações do usuário em atualizações
+- ✅ Detecta se o app está rodando antes de instalar/desinstalar
+- ✅ Suporte a Português e Inglês
+
+**Como usar:**
+```bash
+# Instalar Inno Setup primeiro: https://jrsoftware.org/isdl.php
+python build_installer.py    # Cria tudo automaticamente
+```
+
+**Arquivos criados:**
+- `installer.iss` - Script do Inno Setup
+- `build_installer.py` - Automatiza todo o processo de build
+- `BUILD_INSTRUCTIONS.md` - Documentação detalhada
+
+**Próximos passos (profissionalização futura):**
+- [ ] Assinatura de código (Code Signing) para evitar avisos do Windows
+- [ ] Auto-updater integrado
+- [ ] Preparação para Steam
+
+---
+
+#### Cache Temporal de Garrafa
+**Status:** ✅ COMPLETO!
+
+**Problema Resolvido:**
+- Quando o usuário virava a garrafa para beber, ela não era mais reconhecida pelo detector
+- A garrafa virada não parece uma "bottle" para o modelo de IA
+- Isso causava falha na detecção de goles legítimos
+
+**Solução Implementada (Persistence Buffer):**
+- ✅ Ao detectar garrafa sendo segurada, salva em "cache" por 5 segundos (configurável)
+- ✅ Durante esse período, se detectar gesto de beber, conta como gole válido
+- ✅ Também salva a posição da garrafa e verifica se a mão ainda está na região
+- ✅ Visualização no modo debug: mostra "CACHE: BOTTLE (Xs)" em amarelo
+- ✅ Nova configuração: `bottle_cache_seconds` no config.py
+
+**Por que essa solução:**
+- Simples e eficaz
+- Não depende de detecção contínua durante o movimento
+- Evita falsos positivos (precisa da garrafa + mão na região + gesto)
+- Configurável (pode ajustar o tempo conforme necessário)
+
+**Arquivos Modificados:**
+- `config.py` - Adicionado `bottle_cache_seconds`
+- `detector.py` - Implementado sistema de cache com verificação de região
+
+---
+
+### 2026-01-30 - System Tray (App "de verdade")
+**Status:** ✅ COMPLETO!
+
+**Problema Resolvido:**
+- App não aparecia na barra de tarefas nem na bandeja do sistema
+- Não parecia um "programa de verdade" do Windows
+- Erro ao iniciar com Windows (PermissionError no diretório personalities)
+
+**System Tray Implementado:**
+- ✅ Ícone na bandeja do sistema (ao lado do relógio)
+- ✅ Tooltip com status atual (copos, ml, % da meta)
+- ✅ Menu de contexto com:
+  - Status atual (copos e %)
+  - Pausar/Continuar detecção
+  - Esconder/Mostrar barra de progresso
+  - Abrir Configurações
+  - Sair
+- ✅ Clique simples: mostra/esconde a barra
+- ✅ Duplo clique: abre configurações
+- ✅ Notificação ao iniciar mostrando progresso
+- ✅ App continua rodando mesmo com janelas fechadas
+
+**Correção de Bug:**
+- ✅ Corrigido erro de inicialização com Windows (os.chdir para diretório do app)
+
+**Arquivos Modificados:**
+- `main.py` - Adicionado QSystemTrayIcon com menu e interações
+
+**Próximos Passos (Profissionalização):**
+- [ ] Instalador com Inno Setup
+- [ ] Entrada no Menu Iniciar
+- [ ] Desinstalador pelo Painel de Controle
+- [ ] Preparação para Steam (futuro)
+
+---
 
 ### 2026-01-28 - Finalização do Sistema de Mascote e IA
 **Status:** ✅ COMPLETO!

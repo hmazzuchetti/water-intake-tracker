@@ -6,9 +6,15 @@ import os
 icon_path = 'icon.ico' if os.path.exists('icon.ico') else 'NONE'
 
 datas = [('sounds', 'sounds'), ('data', 'data')]
-# Add models folder if it exists
+
+# Add resource folders if they exist
 if os.path.exists('models'):
     datas.append(('models', 'models'))
+if os.path.exists('mascots'):
+    datas.append(('mascots', 'mascots'))
+if os.path.exists('personalities'):
+    datas.append(('personalities', 'personalities'))
+
 datas += collect_data_files('mediapipe')
 
 
