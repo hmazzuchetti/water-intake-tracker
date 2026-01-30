@@ -24,7 +24,7 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 ## Features Planejadas/Backlog
 
 ### Próxima Feature
-- [ ] **Indicador de ML na barra de progresso** - Mostrar quantos ML cada seção representa para comparar com consumo real e validar precisão
+- [ ] (Escolher próxima feature)
 
 ### Em Refinamento
 - [✅] **System Tray** - COMPLETO!
@@ -54,6 +54,25 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 ## Log de Desenvolvimento
 
 ### 2026-01-30 - Cache Temporal de Garrafa + System Tray
+
+#### Indicadores de ML + Melhorias na Barra de Lembrete
+**Status:** ✅ COMPLETO!
+
+**Indicadores de ML:**
+- ✅ Labels rotacionados a cada 500ml na barra de água
+- ✅ Formato inteligente: "500", "1k", "1.5k", "2k", etc.
+- ✅ Semi-transparentes para não poluir a visualização
+
+**Melhorias na barra de lembrete:**
+- ✅ Removido o tremor/shake (era feio)
+- ✅ Barras coladas (sem gap entre elas)
+- ✅ Título "Lembrete" rotacionado no topo da barra
+
+**Arquivos modificados:**
+- `ui.py` - Labels de ML e melhorias visuais
+- `config.py` - Removido `reminder_shake_threshold`
+
+---
 
 #### Instalador Profissional (Inno Setup)
 **Status:** ✅ COMPLETO!

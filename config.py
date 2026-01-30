@@ -31,7 +31,6 @@ CONFIG = {
     # Reminder settings
     "reminder_interval_minutes": 30,  # Time between drink reminders
     "reminder_bar_width": 10,         # Width of the reminder bar
-    "reminder_shake_threshold": 0, # Start shaking at 25%
 
     # AI Messages settings
     "ai_messages_enabled": True,       # Enable AI-generated messages

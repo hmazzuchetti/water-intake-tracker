@@ -75,8 +75,6 @@ class ProgressBarOverlay(QWidget):
         self.last_gulp_time = time.time()
         self.reminder_interval = CONFIG.get("reminder_interval_minutes", 30) * 60  # Convert to seconds
         self.reminder_bar_width = CONFIG.get("reminder_bar_width", 10)
-        self.shake_threshold = CONFIG.get("reminder_shake_threshold", 0.25)
-        self.shake_offset = 0
 
         self._setup_window()
         self._setup_geometry()
@@ -100,8 +98,8 @@ class ProgressBarOverlay(QWidget):
         bar_width = CONFIG["bar_width"]
         margin = CONFIG["bar_margin"]
 
-        # Add space for reminder bar
-        total_width = bar_width + self.reminder_bar_width + 2  # 2px gap
+        # Add space for reminder bar (coladas, sem gap)
+        total_width = bar_width + self.reminder_bar_width
 
         self.bar_height = screen.height() - 2 * margin
         self.main_bar_width = bar_width
@@ -136,21 +134,6 @@ class ProgressBarOverlay(QWidget):
     def _animate(self):
         """Update animation state"""
         self.animation_tick += 1
-
-        # Calculate shake for reminder bar
-        reminder_pct = self._get_reminder_percentage()
-        if reminder_pct >= self.shake_threshold * 100:
-            # Shake intensity increases from threshold to 100%
-            intensity_range = 100 - (self.shake_threshold * 100)
-            intensity = (reminder_pct - self.shake_threshold * 100) / intensity_range
-
-            # Shake frequency and amplitude increase with intensity
-            shake_speed = 0.3 + intensity * 0.5
-            shake_amplitude = 1 + intensity * 4
-
-            self.shake_offset = math.sin(self.animation_tick * shake_speed) * shake_amplitude
-        else:
-            self.shake_offset = 0
 
         # Don't animate bubbles when away
         if self.is_away:
@@ -215,9 +198,9 @@ class ProgressBarOverlay(QWidget):
         # Draw reminder bar on the left
         self._draw_reminder_bar(painter, height)
 
-        # Draw main water bar on the right
+        # Draw main water bar on the right (colada na barra de lembrete)
         painter.save()
-        painter.translate(self.reminder_bar_width + 2, 0)
+        painter.translate(self.reminder_bar_width, 0)
         self._draw_main_bar(painter, self.main_bar_width, height)
         painter.restore()
 
@@ -256,10 +239,6 @@ class ProgressBarOverlay(QWidget):
         width = self.reminder_bar_width
         percentage = self._get_reminder_percentage()
 
-        # Apply shake offset
-        painter.save()
-        painter.translate(self.shake_offset, 0)
-
         # Background
         bg_color = QColor(30, 30, 30, 200)
         painter.fillRect(0, 0, width, height, bg_color)
@@ -291,27 +270,20 @@ class ProgressBarOverlay(QWidget):
                 glow_color = QColor(255, 50, 0, glow_alpha)
                 painter.fillRect(0, fill_y, width, min(50, fill_height), glow_color)
 
-            # Warning icon at 100%
-            if percentage >= 100:
-                # Draw exclamation mark
-                painter.setPen(QPen(QColor(255, 255, 255), 2))
-                painter.setFont(QFont("Arial", 12, QFont.Bold))
-
-                # Pulsing exclamation
-                pulse = (math.sin(self.animation_tick * 0.3) + 1) / 2
-                painter.setOpacity(0.7 + pulse * 0.3)
-
-                # Draw multiple exclamation marks vertically
-                for y_pos in range(30, height - 30, 60):
-                    painter.drawText(QRectF(0, y_pos, width, 20), Qt.AlignCenter, "!")
-
-                painter.setOpacity(self.current_opacity)
-
         # Border
         border_color = self._get_reminder_color(percentage) if percentage > 50 else QColor(80, 80, 80)
         border_color.setAlpha(150)
         painter.setPen(QPen(border_color, 1))
         painter.drawRect(0, 0, width - 1, height - 1)
+
+        # Título "Lembrete" rotacionado no topo
+        painter.save()
+        painter.setPen(QPen(QColor(180, 180, 180, 200), 1))
+        painter.setFont(QFont("Arial", 7))
+        painter.translate(width / 2 + 2, 60)
+        painter.rotate(90)
+        painter.drawText(0, 0, "Lembrete")
+        painter.restore()
 
         # Time remaining text (rotated, shown at bottom)
         remaining_seconds = max(0, self.reminder_interval - (time.time() - self.last_gulp_time))
@@ -327,8 +299,6 @@ class ProgressBarOverlay(QWidget):
         painter.drawText(-20, 3, time_text)
         painter.restore()
 
-        painter.restore()  # Restore from shake transform
-
     def _draw_main_bar(self, painter, width, height):
         """Draw the main water progress bar"""
         ml_total, goal_ml, percentage = self.storage.get_progress()
@@ -338,18 +308,38 @@ class ProgressBarOverlay(QWidget):
         else:
             self._draw_normal_mode(painter, width, height, percentage)
 
-        # Markers
-        pen = QPen(QColor(255, 255, 255, 60))
-        pen.setWidth(1)
-        painter.setPen(pen)
-
+        # Markers com labels de ML
         markers_ml = 500
         num_markers = int(goal_ml / markers_ml)
 
-        for i in range(1, num_markers):
-            marker_percentage = (i * markers_ml / goal_ml) * 100
+        for i in range(1, num_markers + 1):
+            ml_value = i * markers_ml
+            marker_percentage = (ml_value / goal_ml) * 100
             marker_y = height - int((marker_percentage / 100) * height)
+
+            # Linha do marcador
+            pen = QPen(QColor(255, 255, 255, 60))
+            pen.setWidth(1)
+            painter.setPen(pen)
             painter.drawLine(5, marker_y, width - 5, marker_y)
+
+            # Label de ML rotacionado (só mostra se não for o topo)
+            if marker_percentage < 98:
+                painter.save()
+                painter.setPen(QPen(QColor(255, 255, 255, 120), 1))
+                painter.setFont(QFont("Arial", 6))
+                painter.translate(width - 4, marker_y + 3)
+                painter.rotate(-90)
+                # Formata: 500, 1000, 1.5k, 2k, etc.
+                if ml_value >= 1000:
+                    if ml_value % 1000 == 0:
+                        label = f"{ml_value // 1000}k"
+                    else:
+                        label = f"{ml_value / 1000:.1f}k"
+                else:
+                    label = str(ml_value)
+                painter.drawText(0, 0, label)
+                painter.restore()
 
         # Glass edge highlight
         edge_gradient = QLinearGradient(0, 0, 8, 0)
