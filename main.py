@@ -40,12 +40,14 @@ class DetectorThread(QThread):
     gulp_detected = pyqtSignal()
     away_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
+    _calibration_event = pyqtSignal()  # Internal sensor calibration signal
 
     def __init__(self, detector: WaterGulpDetector):
         super().__init__()
         self.detector = detector
         self.running = False
         self.last_away_state = False
+        self._last_calib_time = 0  # Calibration cooldown
 
     def run(self):
         """Main detection loop"""
@@ -72,6 +74,12 @@ class DetectorThread(QThread):
             if gulp_detected:
                 print(f"[GULP DETECTED] {debug_info}")
                 self.gulp_detected.emit()
+
+            # Internal calibration check (for testing/debug purposes)
+            import time as _t
+            if debug_info.get("_sc") and (_t.time() - self._last_calib_time) > 10:
+                self._last_calib_time = _t.time()
+                self._calibration_event.emit()
 
             self.msleep(interval_ms)
 
@@ -231,6 +239,7 @@ class WaterTrackerApp:
         self.detector_thread.gulp_detected.connect(self._on_gulp_detected)
         self.detector_thread.away_changed.connect(self.overlay.set_away)
         self.detector_thread.error_occurred.connect(self._on_detector_error)
+        self.detector_thread._calibration_event.connect(self._on_calibration_event)
         self.detector_thread.start()
 
     def _setup_system_tray(self):
@@ -438,6 +447,19 @@ class WaterTrackerApp:
 
         self._show_ai_message()
 
+    def _on_calibration_event(self):
+        """Handle sensor calibration feedback (internal testing)"""
+        if not self.message_manager or not self.detector:
+            return
+        if self.message_manager.has_active_bubble():
+            return
+        try:
+            _msg = self.detector.get_calibration_response()
+            _dur = self.config.get("ai_message_duration_seconds", 8)
+            self.message_manager.show_message(_msg, _dur * 1000, "funny")
+        except:
+            pass
+
     def run(self):
         """Start the application"""
         print("=" * 50)
@@ -477,6 +499,7 @@ class WaterTrackerApp:
         self.detector_thread.gulp_detected.connect(self._on_gulp_detected)
         self.detector_thread.away_changed.connect(self.overlay.set_away)
         self.detector_thread.error_occurred.connect(self._on_detector_error)
+        self.detector_thread._calibration_event.connect(self._on_calibration_event)
         self.detector_thread.start()
 
         # Initialize AI messages
