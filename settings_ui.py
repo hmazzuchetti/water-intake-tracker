@@ -100,6 +100,8 @@ def save_user_config(config: dict) -> bool:
         # AI and Mascot settings
         "ai_messages_enabled", "ai_ollama_model", "ai_message_interval_minutes",
         "ai_personality_file", "mascot_enabled", "mascot_file", "mascot_size",
+        # Detection mode
+        "detection_mode", "ai_vision_model", "ai_vision_interval_seconds",
         # Meeting detection
         "meeting_detection_enabled", "meeting_processes"
     ]
@@ -302,6 +304,48 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
+        # Detection Mode Group
+        mode_group = QGroupBox("Modo de Deteccao")
+        mode_layout = QGridLayout(mode_group)
+
+        mode_layout.addWidget(QLabel("Modo:"), 0, 0)
+        self.detection_mode_combo = QComboBox()
+        self.detection_mode_combo.addItem("Classic (MediaPipe)", "classic")
+        self.detection_mode_combo.addItem("AI Vision (Ollama)", "ai_vision")
+        self.detection_mode_combo.currentIndexChanged.connect(self._on_detection_mode_changed)
+        mode_layout.addWidget(self.detection_mode_combo, 0, 1)
+
+        # Vision model settings (shown only when AI Vision selected)
+        self.vision_model_label = QLabel("Modelo de visao:")
+        mode_layout.addWidget(self.vision_model_label, 1, 0)
+        self.vision_model_combo = QComboBox()
+        self.vision_model_combo.setEditable(True)
+        self.vision_model_combo.addItems([
+            "llava",
+            "llava:13b",
+            "llava-phi3",
+            "moondream",
+            "minicpm-v",
+        ])
+        mode_layout.addWidget(self.vision_model_combo, 1, 1)
+
+        self.vision_interval_label = QLabel("Intervalo de analise:")
+        mode_layout.addWidget(self.vision_interval_label, 2, 0)
+        self.vision_interval_spin = QSpinBox()
+        self.vision_interval_spin.setRange(3, 60)
+        self.vision_interval_spin.setSuffix(" segundos")
+        mode_layout.addWidget(self.vision_interval_spin, 2, 1)
+
+        self.vision_note = QLabel(
+            "AI Vision envia fotos da webcam para um modelo de visao local (Ollama)\n"
+            "a cada N segundos. Mais robusto com luz e menos falso positivo.\n"
+            "Requer: ollama pull moondream (ou outro modelo de visao)"
+        )
+        self.vision_note.setStyleSheet("color: #666; font-size: 11px;")
+        mode_layout.addWidget(self.vision_note, 3, 0, 1, 2)
+
+        layout.addWidget(mode_group)
+
         # Camera Selection Group (moved to top - most important for setup)
         camera_group = QGroupBox("Camera Selection")
         camera_layout = QGridLayout(camera_group)
@@ -412,6 +456,15 @@ class SettingsDialog(QDialog):
 
         layout.addStretch()
         return widget
+
+    def _on_detection_mode_changed(self, index):
+        """Show/hide vision settings based on detection mode."""
+        is_vision = self.detection_mode_combo.currentData() == "ai_vision"
+        self.vision_model_label.setVisible(is_vision)
+        self.vision_model_combo.setVisible(is_vision)
+        self.vision_interval_label.setVisible(is_vision)
+        self.vision_interval_spin.setVisible(is_vision)
+        self.vision_note.setVisible(is_vision)
 
     def _create_reminder_tab(self) -> QWidget:
         """Create reminder settings tab"""
@@ -953,6 +1006,19 @@ IMPORTANTE:
                 break
         self._update_mascot_preview(mascot_file)
 
+        # Detection mode
+        detection_mode = self.config.get("detection_mode", "classic")
+        mode_index = 0 if detection_mode == "classic" else 1
+        self.detection_mode_combo.setCurrentIndex(mode_index)
+        vision_model = self.config.get("ai_vision_model", "moondream")
+        idx = self.vision_model_combo.findText(vision_model)
+        if idx >= 0:
+            self.vision_model_combo.setCurrentIndex(idx)
+        else:
+            self.vision_model_combo.setCurrentText(vision_model)
+        self.vision_interval_spin.setValue(self.config.get("ai_vision_interval_seconds", 10))
+        self._on_detection_mode_changed(mode_index)  # Show/hide vision fields
+
         # Meeting detection
         self.meeting_enabled_check.setChecked(self.config.get("meeting_detection_enabled", True))
         self.meeting_processes_edit.setText(self.config.get("meeting_processes", "Zoom.exe,Teams.exe,ms-teams.exe,CiscoCollabHost.exe,webexmta.exe"))
@@ -1000,6 +1066,11 @@ IMPORTANTE:
         self.config["mascot_enabled"] = self.mascot_enabled_check.isChecked()
         self.config["mascot_file"] = self.mascot_combo.currentData() or "mascots/default.png"
         self.config["mascot_size"] = self.mascot_size_spin.value()
+
+        # Detection mode
+        self.config["detection_mode"] = self.detection_mode_combo.currentData() or "classic"
+        self.config["ai_vision_model"] = self.vision_model_combo.currentText().strip() or "moondream"
+        self.config["ai_vision_interval_seconds"] = self.vision_interval_spin.value()
 
         # Meeting detection
         self.config["meeting_detection_enabled"] = self.meeting_enabled_check.isChecked()

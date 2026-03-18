@@ -12,6 +12,13 @@ CONFIG = {
     "bar_width": 30,           # Width in pixels
     "bar_margin": 0,           # Margin from screen edge (0 = glued to side)
 
+    # Detection mode: "classic" (MediaPipe) or "ai_vision" (Ollama vision model)
+    "detection_mode": "classic",
+
+    # AI Vision detection settings (when detection_mode = "ai_vision")
+    "ai_vision_model": "llava",            # Ollama vision model (llava, moondream, etc)
+    "ai_vision_interval_seconds": 10,     # Seconds between vision checks
+
     # Detection settings
     "detection_interval": 300,  # ms between frame captures
     "cooldown_seconds": 10,      # Minimum time between gulps

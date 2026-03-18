@@ -24,7 +24,9 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 ## Features Planejadas/Backlog
 
 ### Próxima Feature
-- [ ] (Escolher próxima feature)
+- [ ] Toggle de som de gole (separado dos sons do mascote)
+- [ ] Mascote mais criativo (reestruturar prompt, cache de mensagens recentes)
+- [ ] Lembrete de levantar e alongar (timer + mascote)
 
 ### Em Refinamento
 - [✅] **System Tray** - COMPLETO!
@@ -52,6 +54,41 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 - [ ] **Integração com wearables** - Conectar com apps de saúde
 
 ## Log de Desenvolvimento
+
+### 2026-03-18 - Deteccao por AI Vision (Ollama)
+**Status:** ✅ COMPLETO!
+
+**Problema Resolvido:**
+- Deteccao MediaPipe falhava com ambiente claro e gerava falsos positivos
+- 3 modelos rodando a cada 300ms era pesado (impactava jogos como BF6)
+- Heuristicas de gesto (holding pose, upward motion) eram frageis
+
+**Solucao Implementada (AI Vision):**
+- ✅ Novo modo de deteccao: envia foto da webcam para modelo de visao (Ollama)
+- ✅ Modelo descreve o que ve, codigo checa keywords ("drinking", "sipping", etc)
+- ✅ 1 check a cada ~10s vs 3 modelos a cada 300ms - muito mais leve
+- ✅ Robusto com iluminacao, menos falso positivo
+- ✅ Seletor de modo nas Settings (Classic MediaPipe / AI Vision)
+- ✅ Dropdown de modelo de visao (llava, moondream, minicpm-v, etc)
+- ✅ Intervalo de analise configuravel
+- ✅ Modo classic mantido como fallback
+- ✅ Script de debug: `test_vision.py`
+
+**Decisoes:**
+- `llava` como modelo padrao (moondream muito fraco, respostas YES/NO nao confiaveis)
+- Abordagem "describe + keyword match" em vez de YES/NO direto (modelos pequenos tem vies em respostas binarias)
+- Intervalo de 2s no thread mas check real a cada 10s (configurable)
+
+**Arquivos Criados:**
+- `vision_detector.py` - VisionGulpDetector (mesma interface que WaterGulpDetector)
+- `test_vision.py` - Script de debug standalone
+
+**Arquivos Modificados:**
+- `config.py` - detection_mode, ai_vision_model, ai_vision_interval_seconds
+- `main.py` - create_detector() escolhe detector por config, intervalo adaptativo
+- `settings_ui.py` - Grupo "Modo de Deteccao" no tab Detection
+
+---
 
 ### 2026-01-30 - Cache Temporal de Garrafa + System Tray
 

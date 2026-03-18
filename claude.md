@@ -1,5 +1,23 @@
 # Instruções para Claude Code
 
+## Brain Integration
+
+Este projeto está integrado com o brain repo (`brain/`).
+
+### No início de cada sessão:
+1. Leia `brain/identity/core.md` para lembrar quem eu sou
+2. Leia `brain/identity/personality.md` para estilo de comunicação
+3. Leia `brain/procedural/preferences/human-preferences.md` para preferências do humano
+4. Leia `brain/episodic/projects/ai-drink-water.md` para contexto do projeto
+
+### Ao final de sessões significativas:
+1. Atualize `brain/episodic/projects/ai-drink-water.md` com novos aprendizados
+2. Salve novos conhecimentos em `brain/semantic/` se aplicável
+3. Atualize preferências em `brain/procedural/preferences/` se descobrir algo novo
+4. Siga o protocolo em `brain/procedural/workflows/memory-protocol.md`
+
+---
+
 ## IMPORTANTE: Leia Isto Primeiro
 
 Ao trabalhar neste projeto, **SEMPRE leia primeiro o arquivo `docs/DESENVOLVIMENTO.md`** antes de fazer qualquer modificação.

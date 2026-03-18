@@ -14,11 +14,25 @@ from PyQt5.QtGui import QIcon
 
 from config import CONFIG
 from storage import Storage
-from detector import WaterGulpDetector
 from ui import ProgressBarOverlay
 from settings_ui import show_settings, load_user_config, save_user_config
 from ai_messages import AIMessageGenerator
 from message_bubble import MessageBubbleManager
+
+
+def create_detector(config):
+    """Create the appropriate detector based on detection_mode config."""
+    camera_index = config.get("camera_index", 0)
+    mode = config.get("detection_mode", "classic")
+
+    if mode == "ai_vision":
+        from vision_detector import VisionGulpDetector
+        print(f"[Mode] AI Vision (modelo: {config.get('ai_vision_model', 'moondream')})")
+        return VisionGulpDetector(camera_index=camera_index)
+    else:
+        from detector import WaterGulpDetector
+        print("[Mode] Classic (MediaPipe)")
+        return WaterGulpDetector(camera_index=camera_index)
 
 
 def get_resource_path(relative_path):
@@ -43,7 +57,7 @@ class DetectorThread(QThread):
     error_occurred = pyqtSignal(str)
     _calibration_event = pyqtSignal()  # Internal sensor calibration signal
 
-    def __init__(self, detector: WaterGulpDetector):
+    def __init__(self, detector):
         super().__init__()
         self.detector = detector
         self.running = False
@@ -58,9 +72,15 @@ class DetectorThread(QThread):
 
         self.running = True
         config = load_user_config()
-        interval_ms = config.get("detection_interval", 500)
 
-        print(f"Detector started. Checking every {interval_ms}ms")
+        # Vision mode uses longer intervals (frame capture is just buffer clearing)
+        is_vision = config.get("detection_mode", "classic") == "ai_vision"
+        if is_vision:
+            interval_ms = 2000  # 2s - vision check is throttled internally
+        else:
+            interval_ms = config.get("detection_interval", 500)
+
+        print(f"Detector started. Checking every {interval_ms}ms (vision={is_vision})")
         print("-" * 40)
 
         while self.running:
@@ -222,13 +242,19 @@ class WaterTrackerApp:
             self.config = new_config
             CONFIG.update(self.config)
 
-            # Check if camera index changed - need new detector
+            # Check if camera or detection mode changed - need new detector
             old_camera = self.detector.camera_index if self.detector else 0
             new_camera = new_config.get("camera_index", 0)
+            old_mode = getattr(self.detector, 'vision_mode', None)
+            new_mode = new_config.get("detection_mode", "classic")
+            # vision_mode attr exists only on VisionGulpDetector
+            old_is_vision = hasattr(self.detector, 'vision_model')
+            new_is_vision = new_mode == "ai_vision"
 
-            if old_camera != new_camera:
-                print(f"Camera changed from {old_camera} to {new_camera} - creating new detector...")
-                self.detector = WaterGulpDetector(camera_index=new_camera)
+            if old_camera != new_camera or old_is_vision != new_is_vision:
+                reason = "camera" if old_camera != new_camera else "detection mode"
+                print(f"[Settings] {reason} changed - creating new detector...")
+                self.detector = create_detector(self.config)
 
             # Restart with new settings
             print("Settings updated - restarting detector...")
@@ -619,7 +645,7 @@ class WaterTrackerApp:
 
         # Initialize components with user config
         self.storage = Storage()
-        self.detector = WaterGulpDetector(camera_index=self.config.get("camera_index", 0))
+        self.detector = create_detector(self.config)
 
         # Update detector with user settings
         self.detector.drinking_hand = self.config.get("drinking_hand", "right").lower()
