@@ -7,8 +7,9 @@ Detects water drinking via webcam and shows progress overlay.
 import sys
 import os
 import time
+import subprocess
 from PyQt5.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon, QMenu, QAction
-from PyQt5.QtCore import QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer, QSharedMemory
 from PyQt5.QtGui import QIcon
 
 from config import CONFIG
@@ -125,6 +126,15 @@ class WaterTrackerApp:
         self.app = QApplication(sys.argv)
         self.app.setQuitOnLastWindowClosed(False)  # Keep running when windows close
 
+        # Single instance check - prevent multiple instances
+        self._shared_mem = QSharedMemory("WaterIntakeTracker_SingleInstance")
+        if self._shared_mem.attach():
+            self._shared_mem.detach()
+        if not self._shared_mem.create(1):
+            # Outra instancia ja esta rodando, sair silenciosamente
+            print("Outra instância já está rodando. Saindo...")
+            sys.exit(0)
+
         self.config = None
         self.storage = None
         self.detector = None
@@ -134,6 +144,11 @@ class WaterTrackerApp:
         # System Tray
         self.tray_icon = None
         self.is_paused = False
+
+        # Meeting detection
+        self.is_meeting = False
+        self.was_paused_before_meeting = False
+        self.meeting_timer = None
 
         # AI Messages
         self.ai_generator = None
@@ -201,7 +216,7 @@ class WaterTrackerApp:
         if self.detector:
             self.detector.stop_camera()
 
-        new_config = show_settings(first_run=False)
+        new_config = show_settings(first_run=False, ai_generator=self.ai_generator)
 
         if new_config:
             self.config = new_config
@@ -252,17 +267,22 @@ class WaterTrackerApp:
         # Create tray icon
         self.tray_icon = QSystemTrayIcon(self.app)
 
-        # Load icon
-        icon_path = get_resource_path("icon.ico")
-        if os.path.exists(icon_path):
-            self.tray_icon.setIcon(QIcon(icon_path))
+        # Load icon - try formats in quality order
+        icon = QIcon()
+        for icon_name in ["icon.png", "icon.webp", "icon.ico"]:
+            icon_path = get_resource_path(icon_name)
+            if os.path.exists(icon_path):
+                test_icon = QIcon(icon_path)
+                if not test_icon.isNull():
+                    icon = test_icon
+                    print(f"[Tray] Ícone carregado: {icon_name}")
+                    break
+
+        if not icon.isNull():
+            self.tray_icon.setIcon(icon)
+            self.app.setWindowIcon(icon)
         else:
-            # Try PNG fallback
-            png_path = get_resource_path("icon.png")
-            if os.path.exists(png_path):
-                self.tray_icon.setIcon(QIcon(png_path))
-            else:
-                print(f"[Tray] Icon not found: {icon_path}")
+            print("[Tray] Nenhum ícone encontrado (icon.png/webp/ico)")
 
         # Create context menu
         tray_menu = QMenu()
@@ -278,6 +298,11 @@ class WaterTrackerApp:
         self.pause_action = QAction("Pausar Detecção", self.app)
         self.pause_action.triggered.connect(self._toggle_pause)
         tray_menu.addAction(self.pause_action)
+
+        # Meeting status (info-only)
+        self.meeting_status_action = QAction("Reunião: Inativo", self.app)
+        self.meeting_status_action.setEnabled(False)
+        tray_menu.addAction(self.meeting_status_action)
 
         # Show/Hide overlay action
         self.visibility_action = QAction("Esconder Barra", self.app)
@@ -322,16 +347,30 @@ class WaterTrackerApp:
         ml_total, goal_ml, percentage = self.storage.get_progress()
         glasses = self.storage.get_glasses()
 
-        status = "PAUSADO - " if self.is_paused else ""
+        if self.is_meeting:
+            status = "EM REUNIÃO - "
+        elif self.is_paused:
+            status = "PAUSADO - "
+        else:
+            status = ""
         tooltip = f"Water Tracker\n{status}{glasses} copos ({ml_total}ml / {goal_ml}ml)\n{percentage:.0f}% da meta"
 
         self.tray_icon.setToolTip(tooltip)
         self.status_action.setText(f"{glasses} copos - {percentage:.0f}%")
 
+        # Update meeting status in menu
+        if hasattr(self, 'meeting_status_action'):
+            if self.is_meeting:
+                self.meeting_status_action.setText("Reunião: EM REUNIÃO")
+            else:
+                self.meeting_status_action.setText("Reunião: Inativo")
+
     def _on_tray_activated(self, reason):
         """Handle tray icon activation (click, double-click, etc)"""
         if reason == QSystemTrayIcon.DoubleClick:
             self._open_settings()
+        elif reason == QSystemTrayIcon.MiddleClick:
+            self._toggle_pause()
         elif reason == QSystemTrayIcon.Trigger:  # Single click
             # Toggle overlay visibility
             if self.overlay:
@@ -354,11 +393,17 @@ class WaterTrackerApp:
             if self.detector:
                 self.detector.stop_camera()
             self.pause_action.setText("Continuar Detecção")
+            # If user pauses manually during meeting, remember that
+            if self.is_meeting:
+                self.was_paused_before_meeting = True
             print("[Tray] Detection paused")
         else:
             # Restart detector
             self._restart_detector()
             self.pause_action.setText("Pausar Detecção")
+            # If user resumes during meeting, don't re-pause when meeting ends
+            if self.is_meeting:
+                self.was_paused_before_meeting = False
             print("[Tray] Detection resumed")
 
         self._update_tray_tooltip()
@@ -447,6 +492,107 @@ class WaterTrackerApp:
 
         self._show_ai_message()
 
+    def _init_meeting_detection(self):
+        """Initialize meeting process detection timer"""
+        if not self.config.get("meeting_detection_enabled", True):
+            print("[Meeting] Detecção de reunião desabilitada")
+            return
+
+        interval_seconds = self.config.get("meeting_check_interval_seconds", 15)
+        self.meeting_timer = QTimer()
+        self.meeting_timer.timeout.connect(self._check_meeting_processes)
+        self.meeting_timer.start(interval_seconds * 1000)
+
+        processes = self.config.get("meeting_processes", "")
+        print(f"[Meeting] Detecção ativa (intervalo: {interval_seconds}s, processos: {processes})")
+
+    def _check_meeting_processes(self):
+        """Check if any meeting process is running"""
+        processes_str = self.config.get("meeting_processes", "")
+        if not processes_str.strip():
+            return
+
+        target_processes = [p.strip().lower() for p in processes_str.split(",") if p.strip()]
+        if not target_processes:
+            return
+
+        try:
+            # Use tasklist with CREATE_NO_WINDOW to avoid console flash
+            result = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            running = set()
+            for line in result.stdout.strip().split("\n"):
+                if line.strip():
+                    # CSV format: "process.exe","PID","Session","Session#","Mem"
+                    parts = line.split(",")
+                    if parts:
+                        proc_name = parts[0].strip('"').lower()
+                        running.add(proc_name)
+
+            meeting_detected = any(p in running for p in target_processes)
+
+            if meeting_detected and not self.is_meeting:
+                self._on_meeting_started()
+            elif not meeting_detected and self.is_meeting:
+                self._on_meeting_ended()
+
+        except Exception as e:
+            print(f"[Meeting] Erro ao checar processos: {e}")
+
+    def _on_meeting_started(self):
+        """Handle meeting detection - auto pause"""
+        self.was_paused_before_meeting = self.is_paused
+        self.is_meeting = True
+
+        if not self.is_paused:
+            # Pause detection and release camera
+            if self.detector_thread:
+                self.detector_thread.stop()
+                self.detector_thread.wait(3000)
+            if self.detector:
+                self.detector.stop_camera()
+            self.is_paused = True
+            self.pause_action.setText("Continuar Detecção")
+
+        self._update_tray_tooltip()
+
+        if self.tray_icon:
+            self.tray_icon.showMessage(
+                "Water Tracker",
+                "Reunião detectada! Câmera liberada.",
+                QSystemTrayIcon.Information,
+                3000
+            )
+        print("[Meeting] Reunião detectada - câmera liberada")
+
+    def _on_meeting_ended(self):
+        """Handle meeting end - auto resume if wasn't manually paused"""
+        self.is_meeting = False
+
+        if not self.was_paused_before_meeting:
+            # Resume detection
+            self.is_paused = False
+            self._restart_detector()
+            self.pause_action.setText("Pausar Detecção")
+            print("[Meeting] Reunião encerrada - detecção retomada")
+        else:
+            print("[Meeting] Reunião encerrada - mantendo pausado (pausa manual)")
+
+        self._update_tray_tooltip()
+
+        if self.tray_icon:
+            msg = "Reunião encerrada. Detecção retomada." if not self.was_paused_before_meeting else "Reunião encerrada."
+            self.tray_icon.showMessage(
+                "Water Tracker",
+                msg,
+                QSystemTrayIcon.Information,
+                3000
+            )
+
     def _on_calibration_event(self):
         """Handle sensor calibration feedback (internal testing)"""
         if not self.message_manager or not self.detector:
@@ -505,6 +651,9 @@ class WaterTrackerApp:
         # Initialize AI messages
         self._init_ai_messages()
 
+        # Initialize meeting detection
+        self._init_meeting_detection()
+
         print("Application running. Close the overlay or press Ctrl+C to exit.")
         print("Right-click the progress bar for options.")
         print("-" * 50)
@@ -530,6 +679,10 @@ class WaterTrackerApp:
     def _shutdown(self):
         """Clean shutdown"""
         print("\nShutting down...")
+
+        # Stop meeting detection
+        if self.meeting_timer:
+            self.meeting_timer.stop()
 
         # Hide tray icon
         if self.tray_icon:

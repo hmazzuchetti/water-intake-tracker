@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QSpinBox, QComboBox, QCheckBox, QPushButton,
     QGroupBox, QFrame, QMessageBox, QTabWidget, QWidget, QTextBrowser,
-    QPlainTextEdit, QFileDialog, QScrollArea
+    QPlainTextEdit, QFileDialog, QScrollArea, QLineEdit
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont, QIcon, QPixmap
@@ -99,7 +99,9 @@ def save_user_config(config: dict) -> bool:
         "require_cup",
         # AI and Mascot settings
         "ai_messages_enabled", "ai_ollama_model", "ai_message_interval_minutes",
-        "ai_personality_file", "mascot_enabled", "mascot_file", "mascot_size"
+        "ai_personality_file", "mascot_enabled", "mascot_file", "mascot_size",
+        # Meeting detection
+        "meeting_detection_enabled", "meeting_processes"
     ]
 
     to_save = {k: config[k] for k in saveable_keys if k in config}
@@ -180,9 +182,10 @@ def is_startup_enabled() -> bool:
 class SettingsDialog(QDialog):
     """Settings dialog for configuring the water tracker"""
 
-    def __init__(self, parent=None, first_run=False):
+    def __init__(self, parent=None, first_run=False, ai_generator=None):
         super().__init__(parent)
         self.first_run = first_run
+        self.ai_generator = ai_generator
         self.config = load_user_config()
 
         self.setWindowTitle("Water Intake Tracker - Settings")
@@ -378,6 +381,27 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(cup_group)
 
+        # Meeting Detection Group
+        meeting_group = QGroupBox("Detecção de Reunião")
+        meeting_layout = QVBoxLayout(meeting_group)
+
+        self.meeting_enabled_check = QCheckBox("Pausar automaticamente durante reuniões")
+        meeting_layout.addWidget(self.meeting_enabled_check)
+
+        meeting_note = QLabel(
+            "Pausa a detecção e libera a câmera quando detectar apps de reunião.\n"
+            "Para Google Meet/Discord, use o clique do meio no ícone da bandeja."
+        )
+        meeting_note.setStyleSheet("color: #666; font-size: 11px;")
+        meeting_layout.addWidget(meeting_note)
+
+        meeting_layout.addWidget(QLabel("Processos monitorados (separados por vírgula):"))
+        self.meeting_processes_edit = QLineEdit()
+        self.meeting_processes_edit.setPlaceholderText("Zoom.exe,Teams.exe,ms-teams.exe")
+        meeting_layout.addWidget(self.meeting_processes_edit)
+
+        layout.addWidget(meeting_group)
+
         # Advanced note
         advanced_note = QLabel(
             "⚠️ Advanced: Detection sensitivity can be adjusted in config.py\n"
@@ -457,6 +481,30 @@ class SettingsDialog(QDialog):
         self.ai_interval_spin.setRange(1, 120)
         self.ai_interval_spin.setSuffix(" min")
         ai_layout.addWidget(self.ai_interval_spin, 2, 1)
+
+        # Ollama connection status and reconnect button
+        ollama_conn_layout = QHBoxLayout()
+        self.ollama_reconnect_btn = QPushButton("Conectar com Ollama")
+        self.ollama_reconnect_btn.clicked.connect(self._try_ollama_reconnect)
+        ollama_conn_layout.addWidget(self.ollama_reconnect_btn)
+
+        self.ollama_status_label = QLabel()
+        self.ollama_status_label.setStyleSheet("font-size: 11px;")
+        ollama_conn_layout.addWidget(self.ollama_status_label, 1)
+
+        # Set initial status
+        if self.ai_generator:
+            if self.ai_generator.ollama_available:
+                self.ollama_status_label.setText("Conectado")
+                self.ollama_status_label.setStyleSheet("color: #080; font-size: 11px;")
+            else:
+                self.ollama_status_label.setText("Desconectado")
+                self.ollama_status_label.setStyleSheet("color: #c00; font-size: 11px;")
+        else:
+            self.ollama_status_label.setText("")
+            self.ollama_reconnect_btn.setEnabled(False)
+
+        ai_layout.addLayout(ollama_conn_layout, 3, 0, 1, 2)
 
         layout.addWidget(ai_group)
 
@@ -547,11 +595,14 @@ class SettingsDialog(QDialog):
 
         if not personality_files:
             # Create default if none exist
-            self.personality_combo.addItem("default", "personalities/default.txt")
+            self.personality_combo.addItem("default", os.path.normpath("personalities/default.txt"))
         else:
             for filepath in sorted(personality_files):
+                filepath = os.path.normpath(filepath)
                 name = os.path.splitext(os.path.basename(filepath))[0]
                 display_name = name.replace("_", " ").title()
+                if len(display_name) > 25:
+                    display_name = display_name[:22] + "..."
                 self.personality_combo.addItem(display_name, filepath)
 
     def _on_personality_changed(self, index):
@@ -638,6 +689,27 @@ IMPORTANTE:
         except Exception as e:
             QMessageBox.warning(self, "Erro", f"Erro ao salvar: {e}")
 
+    def _try_ollama_reconnect(self):
+        """Try to reconnect to Ollama"""
+        if not self.ai_generator:
+            return
+
+        self.ollama_status_label.setText("Conectando...")
+        self.ollama_status_label.setStyleSheet("color: #666; font-size: 11px;")
+        self.ollama_reconnect_btn.setEnabled(False)
+        QApplication.processEvents()
+
+        success, message = self.ai_generator.try_reconnect()
+
+        if success:
+            self.ollama_status_label.setText(message)
+            self.ollama_status_label.setStyleSheet("color: #080; font-size: 11px;")
+        else:
+            self.ollama_status_label.setText(message)
+            self.ollama_status_label.setStyleSheet("color: #c00; font-size: 11px;")
+
+        self.ollama_reconnect_btn.setEnabled(True)
+
     def _populate_mascots(self):
         """Populate mascot combo with available images"""
         self.mascot_combo.clear()
@@ -654,8 +726,11 @@ IMPORTANTE:
             self.mascot_combo.addItem("(nenhum mascote)", "")
         else:
             for filepath in sorted(mascot_files):
+                filepath = os.path.normpath(filepath)
                 name = os.path.splitext(os.path.basename(filepath))[0]
                 display_name = name.replace("_", " ").title()
+                if len(display_name) > 25:
+                    display_name = display_name[:22] + "..."
                 self.mascot_combo.addItem(display_name, filepath)
 
     def _on_mascot_changed(self, index):
@@ -692,16 +767,19 @@ IMPORTANTE:
 
         if filepath:
             # Copy to mascots folder if not already there
-            if not filepath.startswith("mascots"):
+            mascots_dir = os.path.abspath("mascots")
+            if not os.path.abspath(filepath).startswith(mascots_dir):
                 import shutil
                 filename = os.path.basename(filepath)
-                dest = f"mascots/{filename}"
+                dest = os.path.normpath(os.path.join("mascots", filename))
                 try:
                     shutil.copy2(filepath, dest)
                     filepath = dest
                 except Exception as e:
                     QMessageBox.warning(self, "Erro", f"Erro ao copiar arquivo: {e}")
                     return
+            else:
+                filepath = os.path.normpath(filepath)
 
             # Refresh and select
             self._populate_mascots()
@@ -730,6 +808,7 @@ IMPORTANTE:
         <h3>🖱️ Mouse Controls</h3>
         <ul>
             <li><b>Right-click:</b> Open menu (add gulp, undo, settings, etc.)</li>
+            <li><b>Middle-click (tray):</b> Pausar/continuar detecção rapidamente</li>
             <li><b>Double-click:</b> Undo last detected gulp</li>
             <li><b>Drag:</b> Move the bar to a different position</li>
             <li><b>Hover:</b> Bar becomes transparent to not block your view</li>
@@ -859,7 +938,7 @@ IMPORTANTE:
             self.ollama_model_combo.setCurrentText(model)
 
         # Set personality
-        personality_file = self.config.get("ai_personality_file", "personalities/default.txt")
+        personality_file = os.path.normpath(self.config.get("ai_personality_file", "personalities/default.txt"))
         for i in range(self.personality_combo.count()):
             if self.personality_combo.itemData(i) == personality_file:
                 self.personality_combo.setCurrentIndex(i)
@@ -867,12 +946,16 @@ IMPORTANTE:
         self._on_personality_changed(0)  # Load text
 
         # Set mascot
-        mascot_file = self.config.get("mascot_file", "mascots/default.png")
+        mascot_file = os.path.normpath(self.config.get("mascot_file", "mascots/default.png"))
         for i in range(self.mascot_combo.count()):
             if self.mascot_combo.itemData(i) == mascot_file:
                 self.mascot_combo.setCurrentIndex(i)
                 break
         self._update_mascot_preview(mascot_file)
+
+        # Meeting detection
+        self.meeting_enabled_check.setChecked(self.config.get("meeting_detection_enabled", True))
+        self.meeting_processes_edit.setText(self.config.get("meeting_processes", "Zoom.exe,Teams.exe,ms-teams.exe,CiscoCollabHost.exe,webexmta.exe"))
 
     def _save_and_accept(self):
         """Save settings and close dialog"""
@@ -918,6 +1001,10 @@ IMPORTANTE:
         self.config["mascot_file"] = self.mascot_combo.currentData() or "mascots/default.png"
         self.config["mascot_size"] = self.mascot_size_spin.value()
 
+        # Meeting detection
+        self.config["meeting_detection_enabled"] = self.meeting_enabled_check.isChecked()
+        self.config["meeting_processes"] = self.meeting_processes_edit.text().strip()
+
         self.config["first_run"] = False
         self.config["start_with_windows"] = self.start_windows_check.isChecked()
 
@@ -942,9 +1029,9 @@ IMPORTANTE:
         return self.config
 
 
-def show_settings(parent=None, first_run=False) -> dict:
+def show_settings(parent=None, first_run=False, ai_generator=None) -> dict:
     """Show settings dialog and return config if accepted"""
-    dialog = SettingsDialog(parent, first_run)
+    dialog = SettingsDialog(parent, first_run, ai_generator=ai_generator)
 
     if dialog.exec_() == QDialog.Accepted:
         return dialog.get_config()

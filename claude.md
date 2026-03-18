@@ -2,7 +2,7 @@
 
 ## IMPORTANTE: Leia Isto Primeiro
 
-Ao trabalhar neste projeto, **SEMPRE leia primeiro o arquivo `DESENVOLVIMENTO.md`** antes de fazer qualquer modificação.
+Ao trabalhar neste projeto, **SEMPRE leia primeiro o arquivo `docs/DESENVOLVIMENTO.md`** antes de fazer qualquer modificação.
 
 ## Filosofia do Projeto
 
@@ -17,13 +17,13 @@ Este é um projeto de **desenvolvimento incremental e contínuo**. Não é um pr
 
 ## Antes de Começar Qualquer Tarefa
 
-1. ✅ Ler `DESENVOLVIMENTO.md` para entender:
+1. ✅ Ler `docs/DESENVOLVIMENTO.md` para entender:
    - Filosofia de desenvolvimento
    - Features já implementadas
    - Features planejadas
    - Arquitetura do projeto
 
-2. ✅ Verificar o backlog em `DESENVOLVIMENTO.md` - a próxima feature pode já estar listada lá
+2. ✅ Verificar o backlog em `docs/DESENVOLVIMENTO.md` - a próxima feature pode já estar listada lá
 
 3. ✅ Entender o estado atual:
    - O que está funcionando
@@ -37,7 +37,7 @@ Este é um projeto de **desenvolvimento incremental e contínuo**. Não é um pr
 - Adicionar configurações em `config.py` quando necessário
 - Documentar código em português brasileiro
 - Testar extensivamente antes de considerar "pronto"
-- Atualizar `DESENVOLVIMENTO.md` com a nova feature no log
+- Atualizar `docs/DESENVOLVIMENTO.md` com a nova feature no log
 - Manter o código limpo e legível
 
 ### DON'T ❌
@@ -72,7 +72,7 @@ user_config.json     - Config do usuário (não versionar mudanças)
 
 ## Próximas Features Planejadas
 
-Consultar `DESENVOLVIMENTO.md` seção "Features Planejadas/Backlog"
+Consultar `docs/DESENVOLVIMENTO.md` seção "Features Planejadas/Backlog"
 
 ## Notas Importantes
 
@@ -104,7 +104,7 @@ python build_exe.py
 3. Implementar de forma incremental
 4. Testar extensivamente (usar de verdade!)
 5. Refinar baseado no uso real
-6. Atualizar `DESENVOLVIMENTO.md`
+6. Atualizar `docs/DESENVOLVIMENTO.md`
 7. Partir para próxima feature
 
 ---

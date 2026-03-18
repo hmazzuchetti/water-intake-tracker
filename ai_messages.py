@@ -15,13 +15,26 @@ class AIMessageGenerator:
     def __init__(self, personality_file: str = "personalities/default.txt"):
         self.personality_file = personality_file
         self.ollama_available = False
+        self.ollama = None
 
         # Get model from config
         from config import CONFIG
         self.ollama_model = CONFIG.get("ai_ollama_model", "llama3.2:1b")
 
-        # Try to import and connect to Ollama
-        print("[AI DEBUG] Tentando conectar ao Ollama...")
+        # Try to connect to Ollama on startup
+        success, msg = self.try_reconnect()
+        print(f"[AI] Startup: {msg}")
+
+        # Load personality/instructions
+        self.personality = self._load_personality()
+
+        # Fallback messages (when Ollama not available)
+        self.fallback_messages = self._load_fallback_messages()
+
+    def try_reconnect(self) -> tuple:
+        """Tenta (re)conectar ao Ollama.
+        Returns: (sucesso: bool, mensagem: str)
+        """
         try:
             import ollama
             self.ollama = ollama
@@ -34,17 +47,13 @@ class AIMessageGenerator:
             # Extract model names (handle different response formats)
             model_names = []
 
-            # Try to access models attribute or key
             if hasattr(models_response, 'models'):
-                # Response is an object with models attribute
                 for m in models_response.models:
-                    # Try to get the model name from different attributes
                     if hasattr(m, 'model'):
                         model_names.append(m.model)
                     elif hasattr(m, 'name'):
                         model_names.append(m.name)
             elif isinstance(models_response, dict) and 'models' in models_response:
-                # Response is a dict with models key
                 for m in models_response['models']:
                     name = m.get('name') or m.get('model') or str(m)
                     model_names.append(name)
@@ -52,34 +61,26 @@ class AIMessageGenerator:
             print(f"[AI DEBUG] OK - Conectado! Modelos disponiveis: {model_names}")
 
             # Check if our model is available
-            if self.ollama_model in model_names or any(self.ollama_model in name for name in model_names):
+            model_found = self.ollama_model in model_names or any(self.ollama_model in name for name in model_names)
+            if model_found:
                 print(f"[AI DEBUG] OK - Modelo {self.ollama_model} encontrado")
             else:
-                print(f"[AI DEBUG] AVISO - Modelo {self.ollama_model} nao encontrado nos nomes exatos")
-                print(f"[AI DEBUG] Modelos disponiveis para usar: {model_names}")
+                print(f"[AI DEBUG] AVISO - Modelo {self.ollama_model} nao encontrado")
                 if model_names:
                     print(f"[AI DEBUG] Vamos tentar usar mesmo assim...")
 
             self.ollama_available = True
-            print("[AI] OK - Ollama disponivel - usando IA para mensagens")
+            return True, f"Conectado! Modelo {self.ollama_model} disponível"
 
         except ImportError as e:
             print(f"[AI DEBUG] ERRO de import: {e}")
-            print("[AI DEBUG] Execute: pip install ollama")
             self.ollama_available = False
+            return False, "Biblioteca ollama não instalada (pip install ollama)"
 
         except Exception as e:
             print(f"[AI DEBUG] ERRO ao conectar: {type(e).__name__}: {e}")
-            print("[AI DEBUG] Verifique se Ollama está rodando:")
-            print("[AI DEBUG]   Windows: Ollama deve estar rodando (ícone na bandeja)")
-            print("[AI DEBUG]   Teste: ollama list (no terminal)")
             self.ollama_available = False
-
-        # Load personality/instructions
-        self.personality = self._load_personality()
-
-        # Fallback messages (when Ollama not available)
-        self.fallback_messages = self._load_fallback_messages()
+            return False, "Ollama não está rodando"
 
     def _load_personality(self) -> str:
         """Load personality/instruction file for the AI"""

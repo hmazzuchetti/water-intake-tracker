@@ -43,6 +43,11 @@ CONFIG = {
     "mascot_sound": "pop.wav",         # Default sound when mascot appears
     "mascot_size": 300,                # Max size in pixels (square)
 
+    # Meeting detection
+    "meeting_detection_enabled": True,
+    "meeting_check_interval_seconds": 15,
+    "meeting_processes": "Zoom.exe,Teams.exe,ms-teams.exe,CiscoCollabHost.exe,webexmta.exe",
+
     # Sons por tipo de mensagem
     "sound_celebration": "celebration.wav",  # Meta atingida
     "sound_reminder": "reminder.wav",        # Lembrete

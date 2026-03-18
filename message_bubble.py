@@ -5,6 +5,7 @@ Shows AI-generated messages with an animated mascot character
 
 import sys
 import os
+import glob
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QRect, QEasingCurve, pyqtSignal, QPoint
 from PyQt5.QtGui import QPainter, QColor, QPainterPath, QFont, QPen, QPixmap
@@ -35,7 +36,7 @@ class MessageBubble(QWidget):
         # Mascot settings
         self.mascot_enabled = CONFIG.get("mascot_enabled", True)
         self.mascot_size = CONFIG.get("mascot_size", 150)
-        self.mascot_file = CONFIG.get("mascot_file", "mascots/default.png")
+        self.mascot_file = os.path.normpath(CONFIG.get("mascot_file", "mascots/default.png"))
         self.mascot_pixmap = None
 
         # Load mascot
@@ -46,23 +47,41 @@ class MessageBubble(QWidget):
         self._setup_ui()
         self._setup_animations()
 
+    def _try_load_pixmap(self, filepath):
+        """Try to load a mascot pixmap from filepath. Returns True on success."""
+        if not os.path.exists(filepath):
+            return False
+        pixmap = QPixmap(filepath)
+        if pixmap.isNull():
+            return False
+        self.mascot_pixmap = pixmap.scaled(
+            self.mascot_size,
+            self.mascot_size,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+        return True
+
     def _load_mascot(self):
-        """Load mascot image"""
-        if os.path.exists(self.mascot_file):
-            pixmap = QPixmap(self.mascot_file)
-            if not pixmap.isNull():
-                # Scale to max size while maintaining aspect ratio
-                self.mascot_pixmap = pixmap.scaled(
-                    self.mascot_size,
-                    self.mascot_size,
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                )
-            else:
-                print(f"[Mascot] Erro ao carregar imagem: {self.mascot_file}")
-        else:
-            print(f"[Mascot] Arquivo não encontrado: {self.mascot_file}")
-            print(f"[Mascot] Coloque uma imagem PNG em: {self.mascot_file}")
+        """Load mascot image with fallback to any available mascot"""
+        # Try configured file first
+        if self._try_load_pixmap(self.mascot_file):
+            return
+
+        print(f"[Mascot] Arquivo não encontrado ou inválido: {self.mascot_file}")
+
+        # Fallback: scan mascots/ directory for any available image
+        mascot_files = []
+        for ext in ['*.png', '*.jpg', '*.jpeg', '*.gif']:
+            mascot_files.extend(glob.glob(f"mascots/{ext}"))
+
+        for fallback in sorted(mascot_files):
+            fallback = os.path.normpath(fallback)
+            if self._try_load_pixmap(fallback):
+                print(f"[Mascot] Usando fallback: {fallback}")
+                return
+
+        print("[Mascot] Nenhum mascote disponível em mascots/")
 
     def _setup_window(self):
         """Configure window properties"""
