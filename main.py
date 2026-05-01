@@ -17,8 +17,6 @@ from config import CONFIG
 from storage import Storage
 from ui import ProgressBarOverlay
 from settings_ui import show_settings, load_user_config
-from ai_messages import AIMessageGenerator
-from message_bubble import MessageBubbleManager
 
 
 def get_resource_path(relative_path):
@@ -76,12 +74,6 @@ class WaterTrackerApp:
         self.tray_icon = None
         self.tray_update_timer = None
 
-        # AI Messages (Fase 2 da reformulação remove tudo isto)
-        self.ai_generator = None
-        self.message_manager = None
-        self.message_timer = None
-        self.last_message_time = 0
-
     def _show_initial_settings(self) -> bool:
         """Show settings dialog on every startup"""
         existing_config = load_user_config()
@@ -99,28 +91,22 @@ class WaterTrackerApp:
     def _on_gulp_registered(self):
         """Handle a manual gulp registered by the overlay button.
 
-        Storage was already updated by the overlay; here we play sound,
-        update tray, and (for now) trigger milestone AI messages."""
+        Storage was already updated by the overlay; here we play sound
+        and refresh the tray."""
         ml_total, goal_ml, percentage = self.storage.get_progress()
         print(f"[Gulp] {ml_total}ml / {goal_ml}ml ({percentage:.1f}%)")
 
         play_sound(self.config)
         self._update_tray_tooltip()
 
-        if self.config.get("ai_messages_enabled", True):
-            if percentage >= 100 or (50 <= percentage < 55):
-                self._show_ai_message()
-
     def _open_settings(self):
         """Open settings dialog and apply changes that don't need a restart."""
-        new_config = show_settings(first_run=False, ai_generator=self.ai_generator)
+        new_config = show_settings(first_run=False)
 
         if new_config:
             self.config = new_config
             CONFIG.update(self.config)
-            # Hover opacity is the only live-applicable setting on the overlay;
             # bar_width / bar_position changes still need an app restart.
-            self.overlay.hover_opacity = self.config.get("hover_opacity", 0.15)
 
     def _setup_system_tray(self):
         """Setup system tray icon and menu"""
@@ -217,53 +203,6 @@ class WaterTrackerApp:
         self._shutdown()
         self.app.quit()
 
-    def _init_ai_messages(self):
-        """Initialize AI message system (Fase 2 da reformulação remove)."""
-        if not self.config.get("ai_messages_enabled", True):
-            print("[AI] Mensagens desabilitadas")
-            return
-
-        try:
-            personality_file = self.config.get("ai_personality_file", "personalities/default.txt")
-            self.ai_generator = AIMessageGenerator(personality_file)
-            self.message_manager = MessageBubbleManager()
-
-            interval_minutes = self.config.get("ai_message_interval_minutes", 45)
-            self.message_timer = QTimer()
-            self.message_timer.timeout.connect(self._on_message_timer)
-            self.message_timer.start(interval_minutes * 60 * 1000)
-
-            self.last_message_time = time.time()
-            print(f"[AI] Sistema de mensagens inicializado (intervalo: {interval_minutes} min)")
-        except Exception as e:
-            print(f"[AI] Erro ao inicializar sistema de mensagens: {e}")
-
-    def _show_ai_message(self):
-        if not self.message_manager or not self.ai_generator:
-            return
-        if self.message_manager.has_active_bubble():
-            return
-
-        try:
-            ml_total, goal_ml, percentage = self.storage.get_progress()
-            if hasattr(self.overlay, 'last_gulp_time'):
-                minutes_since = int((time.time() - self.overlay.last_gulp_time) / 60)
-            else:
-                minutes_since = 0
-
-            message, message_type = self.ai_generator.generate_message(ml_total, goal_ml, minutes_since)
-            duration_seconds = self.config.get("ai_message_duration_seconds", 8)
-            self.message_manager.show_message(message, duration_seconds * 1000, message_type)
-            self.last_message_time = time.time()
-            print(f"[AI] Mensagem ({message_type}): \"{message}\"")
-        except Exception as e:
-            print(f"[AI] Erro ao gerar mensagem: {e}")
-
-    def _on_message_timer(self):
-        if hasattr(self.overlay, 'is_away') and self.overlay.is_away:
-            return
-        self._show_ai_message()
-
     def run(self):
         """Start the application"""
         print("=" * 50)
@@ -290,9 +229,6 @@ class WaterTrackerApp:
         # Tray
         self._setup_system_tray()
 
-        # AI messages (Phase 2 will remove this)
-        self._init_ai_messages()
-
         print("Application running. Click the bar to register a gulp.")
         print("Right-click the bar for options. Tray icon for menu.")
         print("-" * 50)
@@ -311,8 +247,6 @@ class WaterTrackerApp:
 
     def _shutdown(self):
         print("\nShutting down...")
-        if self.message_timer:
-            self.message_timer.stop()
         if self.tray_update_timer:
             self.tray_update_timer.stop()
         if self.tray_icon:

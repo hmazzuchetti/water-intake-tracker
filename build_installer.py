@@ -30,7 +30,7 @@ APP_NAME = "WaterIntakeTracker"
 VERSION = "1.0.0"
 
 # Pastas de recursos que precisam estar ao lado do exe
-RESOURCE_FOLDERS = ["sounds", "mascots", "personalities", "models", "data"]
+RESOURCE_FOLDERS = ["sounds", "data"]
 
 # Arquivos adicionais
 RESOURCE_FILES = ["icon.ico", "user_config.json"]
@@ -128,15 +128,9 @@ def build_exe():
             "--windowed",
             "--icon=icon.ico",
             "--add-data=sounds;sounds",
-            "--add-data=mascots;mascots",
-            "--add-data=personalities;personalities",
-            "--add-data=models;models",
             "--add-data=data;data",
             "--hidden-import=winsound",
-            "--hidden-import=mediapipe",
-            "--hidden-import=cv2",
             "--hidden-import=PyQt5",
-            "--collect-data=mediapipe",
             "main.py"
         ]
 

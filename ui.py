@@ -83,19 +83,13 @@ class ProgressBarOverlay(QWidget):
         self.button_anim_target = 1.0
         self.button_idle_pulse = 0.0    # subtle idle bob
 
-        # Away mode state
+        # Away mode state (legacy; nothing toggles it now that webcam is gone)
         self.is_away = False
 
         # Hover state
         self.is_hovered = False
-        self.hover_opacity = CONFIG.get("hover_opacity", 0.15)
         self.normal_opacity = 1.0
         self.current_opacity = 1.0
-
-        # Reminder bar state (will be removed in Fase 2)
-        self.last_gulp_time = time.time()
-        self.reminder_interval = CONFIG.get("reminder_interval_minutes", 30) * 60  # Convert to seconds
-        self.reminder_bar_width = CONFIG.get("reminder_bar_width", 10)
 
         self._setup_window()
         self._setup_geometry()
@@ -119,18 +113,15 @@ class ProgressBarOverlay(QWidget):
         bar_width = CONFIG["bar_width"]
         margin = CONFIG["bar_margin"]
 
-        # Add space for reminder bar (coladas, sem gap)
-        total_width = bar_width + self.reminder_bar_width
-
         self.bar_height = screen.height() - 2 * margin
         self.main_bar_width = bar_width
 
         if CONFIG["bar_position"] == "right":
-            x = screen.width() - total_width - margin
+            x = screen.width() - bar_width - margin
         else:
             x = margin
 
-        self.setGeometry(x, margin, total_width, self.bar_height)
+        self.setGeometry(x, margin, bar_width, self.bar_height)
 
     def _connect_signals(self):
         """Connect internal signals"""
@@ -142,15 +133,6 @@ class ProgressBarOverlay(QWidget):
         self.animation_timer = QTimer(self)
         self.animation_timer.timeout.connect(self._animate)
         self.animation_timer.start(50)  # 20 FPS
-
-    def _get_reminder_percentage(self) -> float:
-        """Get reminder bar fill percentage (0-100)"""
-        if self.is_away:
-            return 0  # Don't count time when away
-
-        elapsed = time.time() - self.last_gulp_time
-        percentage = min(100, (elapsed / self.reminder_interval) * 100)
-        return percentage
 
     def _animate(self):
         """Update animation state"""
@@ -198,10 +180,6 @@ class ProgressBarOverlay(QWidget):
 
         self.update()
 
-    def reset_reminder(self):
-        """Reset the reminder timer"""
-        self.last_gulp_time = time.time()
-
     def set_away(self, is_away: bool):
         """Set away status"""
         if self.is_away != is_away:
@@ -216,8 +194,7 @@ class ProgressBarOverlay(QWidget):
         self.update()
 
     def _on_gulp_visual_burst(self):
-        """Visual-only response when something else (not the user click) emits gulp_detected."""
-        self.reset_reminder()
+        """Visual-only burst (e.g. external trigger that wants the bar to react)."""
         for _ in range(5):
             self.bubbles.append(Bubble(self.main_bar_width, self.height() - 10))
         self.update()
@@ -225,7 +202,6 @@ class ProgressBarOverlay(QWidget):
     def _register_gulp(self, click_pos):
         """Register a gulp from a manual click and trigger the dopamine microinteraction."""
         self.storage.add_gulp()
-        self.reset_reminder()
 
         # Splash boost: temporarily increases wave amplitude
         self.splash_boost = 1.0
@@ -249,115 +225,14 @@ class ProgressBarOverlay(QWidget):
         height = self.height()
         bar_area_height = max(50, height - self.button_height - self.button_gap)
 
-        # Draw reminder bar on the left (only over the bar area)
-        self._draw_reminder_bar(painter, bar_area_height)
-
-        # Draw main water bar on the right (colada na barra de lembrete)
-        painter.save()
-        painter.translate(self.reminder_bar_width, 0)
+        # Main water bar (full width, no reminder bar anymore)
         self._draw_main_bar(painter, self.main_bar_width, bar_area_height)
-        painter.restore()
 
         # Big gulp button at the bottom
         self._draw_button(painter, self._button_rect())
 
         # Draw click ripples on top of everything (widget coords)
         self._draw_ripples(painter)
-
-    def _get_reminder_color(self, percentage: float) -> QColor:
-        """Get color for reminder bar based on percentage"""
-        if percentage < 25:
-            # Green
-            return QColor(76, 175, 80)
-        elif percentage < 50:
-            # Green to Yellow
-            ratio = (percentage - 25) / 25
-            return QColor(
-                int(76 + (255 - 76) * ratio),
-                int(175 + (235 - 175) * ratio),
-                int(80 - 80 * ratio)
-            )
-        elif percentage < 75:
-            # Yellow to Orange
-            ratio = (percentage - 50) / 25
-            return QColor(
-                255,
-                int(235 - (235 - 152) * ratio),
-                0
-            )
-        else:
-            # Orange to Red
-            ratio = (percentage - 75) / 25
-            return QColor(
-                255,
-                int(152 - 152 * ratio),
-                0
-            )
-
-    def _draw_reminder_bar(self, painter, height):
-        """Draw the reminder/timer bar"""
-        width = self.reminder_bar_width
-        percentage = self._get_reminder_percentage()
-
-        # Background
-        bg_color = QColor(30, 30, 30, 200)
-        painter.fillRect(0, 0, width, height, bg_color)
-
-        if percentage > 0:
-            # Fill height (from bottom)
-            fill_height = int((percentage / 100) * height)
-            fill_y = height - fill_height
-
-            # Create gradient based on urgency
-            fill_gradient = QLinearGradient(0, fill_y, 0, height)
-
-            # Top color (current urgency level)
-            top_color = self._get_reminder_color(percentage)
-
-            # Bottom is always green (where we started)
-            fill_gradient.setColorAt(0, top_color)
-            fill_gradient.setColorAt(0.3, self._get_reminder_color(percentage * 0.7))
-            fill_gradient.setColorAt(0.6, self._get_reminder_color(percentage * 0.4))
-            fill_gradient.setColorAt(1, self._get_reminder_color(0))
-
-            painter.fillRect(0, fill_y, width, fill_height, fill_gradient)
-
-            # Pulsing glow effect when urgent (>75%)
-            if percentage >= 75:
-                pulse = (math.sin(self.animation_tick * 0.2) + 1) / 2  # 0 to 1
-                glow_alpha = int(50 + pulse * 100)
-
-                glow_color = QColor(255, 50, 0, glow_alpha)
-                painter.fillRect(0, fill_y, width, min(50, fill_height), glow_color)
-
-        # Border
-        border_color = self._get_reminder_color(percentage) if percentage > 50 else QColor(80, 80, 80)
-        border_color.setAlpha(150)
-        painter.setPen(QPen(border_color, 1))
-        painter.drawRect(0, 0, width - 1, height - 1)
-
-        # Título "Lembrete" rotacionado no topo
-        painter.save()
-        painter.setPen(QPen(QColor(180, 180, 180, 200), 1))
-        painter.setFont(QFont("Arial", 7))
-        painter.translate(width / 2 + 2, 60)
-        painter.rotate(90)
-        painter.drawText(0, 0, "Lembrete")
-        painter.restore()
-
-        # Time remaining text (rotated, shown at bottom)
-        remaining_seconds = max(0, self.reminder_interval - (time.time() - self.last_gulp_time))
-        remaining_minutes = int(remaining_seconds // 60)
-        remaining_secs = int(remaining_seconds % 60)
-
-        painter.setPen(QPen(QColor(200, 200, 200), 1))
-        painter.setFont(QFont("Arial", 7))
-        painter.save()
-        painter.translate(width / 2, height - 10)
-        painter.rotate(-90)
-        time_text = f"{remaining_minutes}:{remaining_secs:02d}"
-        painter.drawText(-20, 3, time_text)
-        painter.restore()
 
     def _draw_main_bar(self, painter, width, height):
         """Draw the main water progress bar"""
@@ -746,18 +621,9 @@ class ProgressBarOverlay(QWidget):
         menu = QMenu(self)
 
         ml_total, goal_ml, percentage = self.storage.get_progress()
-        status = " (Away)" if self.is_away else ""
-        info_action = QAction(f"{ml_total}ml / {goal_ml}ml{status}", self)
+        info_action = QAction(f"{ml_total}ml / {goal_ml}ml", self)
         info_action.setEnabled(False)
         menu.addAction(info_action)
-
-        # Reminder info
-        remaining = max(0, self.reminder_interval - (time.time() - self.last_gulp_time))
-        remaining_min = int(remaining // 60)
-        remaining_sec = int(remaining % 60)
-        reminder_action = QAction(f"Reminder in: {remaining_min}:{remaining_sec:02d}", self)
-        reminder_action.setEnabled(False)
-        menu.addAction(reminder_action)
 
         menu.addSeparator()
 
@@ -770,11 +636,6 @@ class ProgressBarOverlay(QWidget):
         if self.storage.get_glasses() == 0:
             undo_action.setEnabled(False)
         menu.addAction(undo_action)
-
-        # Reset reminder
-        reset_reminder_action = QAction("Reset reminder timer", self)
-        reset_reminder_action.triggered.connect(self.reset_reminder)
-        menu.addAction(reset_reminder_action)
 
         menu.addSeparator()
 
@@ -819,7 +680,6 @@ class ProgressBarOverlay(QWidget):
         """Reset today's progress"""
         self.storage.reset()
         self.bubbles.clear()
-        self.reset_reminder()
         self.update()
 
     def _move_to_other_side(self):

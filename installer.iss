@@ -76,9 +76,6 @@ Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Pastas de recursos
 Source: "sounds\*"; DestDir: "{app}\sounds"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "mascots\*"; DestDir: "{app}\mascots"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.md,README*"
-Source: "personalities\*"; DestDir: "{app}\personalities"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "models\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Pasta de dados (vazia inicialmente, criada pelo app)
 Source: "data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist

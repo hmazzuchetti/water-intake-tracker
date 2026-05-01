@@ -45,12 +45,8 @@ if exist "WaterIntakeTracker.spec" (
         --windowed ^
         --add-data "sounds;sounds" ^
         --add-data "data;data" ^
-        --add-data "models;models" ^
         --hidden-import=winsound ^
-        --hidden-import=cv2 ^
-        --hidden-import=mediapipe ^
         --hidden-import=PyQt5.sip ^
-        --collect-all mediapipe ^
         %ICON_ARG% ^
         main.py
 )

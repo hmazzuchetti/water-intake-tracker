@@ -1,21 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_data_files
 import os
 
-# Check if icon exists
 icon_path = 'icon.ico' if os.path.exists('icon.ico') else 'NONE'
 
 datas = [('sounds', 'sounds'), ('data', 'data')]
-
-# Add resource folders if they exist
-if os.path.exists('models'):
-    datas.append(('models', 'models'))
-if os.path.exists('mascots'):
-    datas.append(('mascots', 'mascots'))
-if os.path.exists('personalities'):
-    datas.append(('personalities', 'personalities'))
-
-datas += collect_data_files('mediapipe')
 
 
 a = Analysis(
@@ -23,7 +11,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=['mediapipe', 'cv2', 'PyQt5', 'winsound'],
+    hiddenimports=['PyQt5', 'winsound'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
