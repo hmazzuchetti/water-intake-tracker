@@ -7,8 +7,10 @@ import sys
 import os
 import json
 import winreg
-import cv2
 import glob
+
+# cv2 is imported lazily inside enumerate_cameras / test_camera
+# (the Detection tab is going away in Fase 2 of the refactor anyway).
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QSpinBox, QComboBox, QCheckBox, QPushButton,
@@ -37,11 +39,14 @@ APP_NAME = "WaterIntakeTracker"
 
 def enumerate_cameras(max_index=10):
     """Find available cameras and return list of (index, name) tuples"""
+    try:
+        import cv2
+    except ImportError:
+        return []
     available = []
     for i in range(max_index):
         cap = cv2.VideoCapture(i)
         if cap.isOpened():
-            # Try to get camera name (not always available on Windows)
             available.append((i, f"Camera {i}"))
             cap.release()
     return available
@@ -50,15 +55,17 @@ def enumerate_cameras(max_index=10):
 def test_camera(camera_index, timeout_ms=3000):
     """Test if a camera can be opened and read from. Returns (success, message)"""
     try:
+        import cv2
+    except ImportError:
+        return False, "OpenCV (cv2) não instalado — câmera removida na reformulação"
+    try:
         cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():
             return False, f"Could not open camera {camera_index}"
 
-        # Set a short timeout and try to read a frame
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        # Try to read a frame
         ret, frame = cap.read()
         cap.release()
 

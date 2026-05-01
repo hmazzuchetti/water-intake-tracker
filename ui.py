@@ -46,21 +46,42 @@ class ProgressBarOverlay(QWidget):
     """Transparent overlay widget showing water intake progress"""
 
     # Signals
-    gulp_detected = pyqtSignal()
+    gulp_registered = pyqtSignal()  # emitted when user clicks to register a gulp
+    gulp_detected = pyqtSignal()    # legacy alias for visual-only refresh
     away_status_changed = pyqtSignal(bool)
     settings_requested = pyqtSignal()
 
     def __init__(self, storage: Storage = None):
         super().__init__()
         self.storage = storage or Storage()
-        self.dragging = False
         self.drag_position = QPoint()
+
+        # Click-vs-drag tracking (manual gulp button)
+        self.click_start_global = QPoint()
+        self.click_drag_threshold = 5   # px before a press becomes a drag
+        self.dragging_real = False
 
         # Animation state
         self.wave_offset = 0
         self.bubbles = []
         self.max_bubbles = 8
         self.animation_tick = 0
+
+        # Microinteraction state (dopamine button)
+        self.ripples = []           # list of {"x": float, "y": float, "age": int}
+        self.ripple_max_age = 25    # frames at 20 FPS ≈ 1.25s
+        self.splash_boost = 0.0     # 0..1, decays per frame; boosts wave amplitude
+        self.splash_decay = 0.90
+
+        # Big fat gulp button (lives at the bottom of the overlay)
+        self.button_height = 80
+        self.button_gap = 6         # gap between bar and button
+        self.button_hover = False
+        self.button_pressed = False
+        self.press_in_button = False
+        self.button_anim_scale = 1.0    # animates on press/release
+        self.button_anim_target = 1.0
+        self.button_idle_pulse = 0.0    # subtle idle bob
 
         # Away mode state
         self.is_away = False
@@ -71,7 +92,7 @@ class ProgressBarOverlay(QWidget):
         self.normal_opacity = 1.0
         self.current_opacity = 1.0
 
-        # Reminder bar state
+        # Reminder bar state (will be removed in Fase 2)
         self.last_gulp_time = time.time()
         self.reminder_interval = CONFIG.get("reminder_interval_minutes", 30) * 60  # Convert to seconds
         self.reminder_bar_width = CONFIG.get("reminder_bar_width", 10)
@@ -113,7 +134,7 @@ class ProgressBarOverlay(QWidget):
 
     def _connect_signals(self):
         """Connect internal signals"""
-        self.gulp_detected.connect(self._on_gulp_detected)
+        self.gulp_detected.connect(self._on_gulp_visual_burst)
         self.away_status_changed.connect(self._on_away_status_changed)
 
     def _setup_animation(self):
@@ -134,6 +155,24 @@ class ProgressBarOverlay(QWidget):
     def _animate(self):
         """Update animation state"""
         self.animation_tick += 1
+
+        # Decay splash boost
+        if self.splash_boost > 0:
+            self.splash_boost *= self.splash_decay
+            if self.splash_boost < 0.01:
+                self.splash_boost = 0.0
+
+        # Age ripples; drop dead ones
+        if self.ripples:
+            for r in self.ripples:
+                r["age"] += 1
+            self.ripples = [r for r in self.ripples if r["age"] < self.ripple_max_age]
+
+        # Tween button scale toward target (snappy spring)
+        if abs(self.button_anim_scale - self.button_anim_target) > 0.005:
+            self.button_anim_scale += (self.button_anim_target - self.button_anim_scale) * 0.35
+        # Subtle idle "breathing" pulse to draw attention
+        self.button_idle_pulse = math.sin(self.animation_tick * 0.05) * 0.5 + 0.5
 
         # Don't animate bubbles when away
         if self.is_away:
@@ -176,14 +215,29 @@ class ProgressBarOverlay(QWidget):
             self.bubbles.clear()
         self.update()
 
-    def _on_gulp_detected(self):
-        """Handle gulp detection"""
-        # Reset reminder timer
+    def _on_gulp_visual_burst(self):
+        """Visual-only response when something else (not the user click) emits gulp_detected."""
         self.reset_reminder()
-
-        # Add bubbles
         for _ in range(5):
             self.bubbles.append(Bubble(self.main_bar_width, self.height() - 10))
+        self.update()
+
+    def _register_gulp(self, click_pos):
+        """Register a gulp from a manual click and trigger the dopamine microinteraction."""
+        self.storage.add_gulp()
+        self.reset_reminder()
+
+        # Splash boost: temporarily increases wave amplitude
+        self.splash_boost = 1.0
+
+        # Ripple at click position (in widget coords)
+        self.ripples.append({"x": float(click_pos.x()), "y": float(click_pos.y()), "age": 0})
+
+        # Bubble burst
+        for _ in range(8):
+            self.bubbles.append(Bubble(self.main_bar_width, self.height() - 10))
+
+        self.gulp_registered.emit()
         self.update()
 
     def paintEvent(self, event):
@@ -192,17 +246,23 @@ class ProgressBarOverlay(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setOpacity(self.current_opacity)
 
-        total_width = self.width()
         height = self.height()
+        bar_area_height = max(50, height - self.button_height - self.button_gap)
 
-        # Draw reminder bar on the left
-        self._draw_reminder_bar(painter, height)
+        # Draw reminder bar on the left (only over the bar area)
+        self._draw_reminder_bar(painter, bar_area_height)
 
         # Draw main water bar on the right (colada na barra de lembrete)
         painter.save()
         painter.translate(self.reminder_bar_width, 0)
-        self._draw_main_bar(painter, self.main_bar_width, height)
+        self._draw_main_bar(painter, self.main_bar_width, bar_area_height)
         painter.restore()
+
+        # Big gulp button at the bottom
+        self._draw_button(painter, self._button_rect())
+
+        # Draw click ripples on top of everything (widget coords)
+        self._draw_ripples(painter)
 
     def _get_reminder_color(self, percentage: float) -> QColor:
         """Get color for reminder bar based on percentage"""
@@ -398,7 +458,8 @@ class ProgressBarOverlay(QWidget):
             water_path = QPainterPath()
             water_path.moveTo(0, height)
 
-            wave_height = 6
+            # Splash boost amplifies the wave temporarily after a gulp
+            wave_height = 6 + self.splash_boost * 14
             wave_frequency = 0.15
 
             water_path.lineTo(0, water_top + wave_height)
@@ -461,55 +522,224 @@ class ProgressBarOverlay(QWidget):
             reflection_gradient.setColorAt(1, QColor(255, 255, 255, 0))
             painter.fillRect(0, water_top, int(width * 0.4), progress_height, reflection_gradient)
 
+    def _button_rect(self) -> QRectF:
+        """Bounding rect of the big gulp button (in widget coords)."""
+        return QRectF(
+            0,
+            self.height() - self.button_height,
+            self.width(),
+            self.button_height
+        )
+
+    def _draw_button(self, painter, rect: QRectF):
+        """Draw the big chunky gulp button: water drop + plus, with hover/press states."""
+        # Inset so the button doesn't touch widget edges
+        inset = QRectF(
+            rect.x() + 1,
+            rect.y() + 4,
+            rect.width() - 2,
+            rect.height() - 8
+        )
+
+        # Apply press scale (anchor at center)
+        scale = self.button_anim_scale
+        if scale != 1.0:
+            cx = inset.center().x()
+            cy = inset.center().y()
+            new_w = inset.width() * scale
+            new_h = inset.height() * scale
+            inset = QRectF(cx - new_w / 2, cy - new_h / 2, new_w, new_h)
+
+        # Color palette by state
+        if self.button_pressed:
+            top_col = QColor(40, 110, 180)
+            bot_col = QColor(15, 60, 130)
+            border_col = QColor(160, 210, 255, 220)
+        elif self.button_hover:
+            top_col = QColor(130, 210, 255)
+            bot_col = QColor(60, 150, 230)
+            border_col = QColor(220, 240, 255, 230)
+        else:
+            top_col = QColor(90, 180, 235)
+            bot_col = QColor(40, 120, 200)
+            border_col = QColor(170, 215, 255, 200)
+
+        # Drop shadow (only when not pressed → "lifts off the surface")
+        if not self.button_pressed:
+            shadow_path = QPainterPath()
+            shadow_path.addRoundedRect(
+                inset.x() + 1, inset.y() + 4,
+                inset.width(), inset.height(),
+                14, 14
+            )
+            painter.fillPath(shadow_path, QColor(0, 0, 0, 110))
+
+        # Background gradient
+        gradient = QLinearGradient(inset.x(), inset.top(), inset.x(), inset.bottom())
+        gradient.setColorAt(0, top_col)
+        gradient.setColorAt(1, bot_col)
+
+        path = QPainterPath()
+        path.addRoundedRect(inset, 14, 14)
+        painter.fillPath(path, gradient)
+
+        # Idle pulse highlight (subtle, only when not interacting)
+        if not self.button_pressed and not self.button_hover:
+            pulse_alpha = int(40 + self.button_idle_pulse * 35)
+            pulse_grad = QLinearGradient(inset.x(), inset.top(), inset.x(), inset.center().y())
+            pulse_grad.setColorAt(0, QColor(255, 255, 255, pulse_alpha))
+            pulse_grad.setColorAt(1, QColor(255, 255, 255, 0))
+            painter.fillPath(path, pulse_grad)
+
+        # Border
+        painter.setPen(QPen(border_col, 1.5))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawPath(path)
+
+        # Water drop icon
+        cx = inset.center().x()
+        cy = inset.center().y() + 2
+        drop_w = inset.width() * 0.55
+        drop_h = inset.height() * 0.62
+        top_y = cy - drop_h * 0.55
+        bot_y = cy + drop_h * 0.45
+        side = drop_w * 0.55
+
+        drop_path = QPainterPath()
+        drop_path.moveTo(cx, top_y)
+        drop_path.cubicTo(
+            cx + side, top_y + drop_h * 0.35,
+            cx + side, bot_y - drop_h * 0.05,
+            cx, bot_y
+        )
+        drop_path.cubicTo(
+            cx - side, bot_y - drop_h * 0.05,
+            cx - side, top_y + drop_h * 0.35,
+            cx, top_y
+        )
+        drop_path.closeSubpath()
+
+        # Drop fill
+        drop_color = QColor(255, 255, 255, 235) if not self.button_pressed else QColor(255, 255, 255, 200)
+        painter.fillPath(drop_path, drop_color)
+        painter.setPen(QPen(QColor(255, 255, 255, 240), 1.2))
+        painter.drawPath(drop_path)
+
+        # "+" badge in upper area of the drop
+        plus_size = max(7.0, min(inset.width(), inset.height()) * 0.18)
+        plus_x = cx
+        plus_y = top_y + drop_h * 0.30
+        painter.setPen(QPen(QColor(30, 100, 180), 2.2))
+        painter.drawLine(int(plus_x - plus_size / 2), int(plus_y), int(plus_x + plus_size / 2), int(plus_y))
+        painter.drawLine(int(plus_x), int(plus_y - plus_size / 2), int(plus_x), int(plus_y + plus_size / 2))
+
+    def _draw_ripples(self, painter):
+        """Draw radial ripples emanating from recent click positions."""
+        if not self.ripples:
+            return
+        painter.save()
+        painter.setBrush(Qt.NoBrush)
+        for r in self.ripples:
+            progress = r["age"] / self.ripple_max_age  # 0..1
+            radius = 6 + progress * 32
+            alpha = int(200 * (1.0 - progress))
+            if alpha <= 0:
+                continue
+            pen = QPen(QColor(180, 230, 255, alpha), 2)
+            painter.setPen(pen)
+            painter.drawEllipse(QRectF(
+                r["x"] - radius, r["y"] - radius,
+                radius * 2, radius * 2
+            ))
+        painter.restore()
+
     def enterEvent(self, event):
-        """Mouse enter - reduce opacity"""
+        """Mouse enter - show tooltip. Opacity stays full so the gulp button
+        remains clearly visible/clickable. The original see-through behavior
+        will become moot once the bar registers as a Windows AppBar."""
         self.is_hovered = True
-        self.current_opacity = self.hover_opacity
 
         ml_total, goal_ml, percentage = self.storage.get_progress()
         glasses = self.storage.get_glasses()
-        reminder_pct = self._get_reminder_percentage()
-        remaining = max(0, self.reminder_interval - (time.time() - self.last_gulp_time))
-        remaining_min = int(remaining // 60)
 
         status = " (Away)" if self.is_away else ""
         tooltip = f"{ml_total}ml / {goal_ml}ml ({percentage:.1f}%){status}\n"
-        tooltip += f"{glasses} gulps detected\n"
-        tooltip += f"Next reminder: {remaining_min} min"
+        tooltip += f"{glasses} goles registrados"
 
         QToolTip.showText(self.mapToGlobal(QPoint(0, 0)), tooltip, self)
         self.update()
 
-    def leaveEvent(self, event):
-        """Mouse leave - restore opacity"""
-        self.is_hovered = False
-        self.current_opacity = self.normal_opacity
-        self.update()
-
     def mousePressEvent(self, event):
-        """Handle mouse press"""
+        """Press on button arms a gulp; press on bar arms a drag."""
         if event.button() == Qt.LeftButton:
-            self.dragging = True
+            self.click_start_global = event.globalPos()
             self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            self.dragging_real = False
+            self.press_in_button = self._button_rect().contains(event.pos())
+            if self.press_in_button:
+                self.button_pressed = True
+                self.button_anim_target = 0.92  # squish on press
+                self.update()
             event.accept()
         elif event.button() == Qt.RightButton:
             self._show_context_menu(event.globalPos())
 
     def mouseMoveEvent(self, event):
-        """Handle dragging"""
-        if self.dragging and event.buttons() & Qt.LeftButton:
+        """Update hover; once moved past threshold over the bar, treat as drag."""
+        # Hover state for the button (works even without buttons pressed thanks to setMouseTracking)
+        in_btn = self._button_rect().contains(event.pos())
+        if in_btn != self.button_hover:
+            self.button_hover = in_btn
+            self.update()
+
+        if not (event.buttons() & Qt.LeftButton):
+            return
+
+        # Pressed in the button area: cancel "press" if dragged off the button
+        if self.press_in_button:
+            if not in_btn and self.button_pressed:
+                self.button_pressed = False
+                self.button_anim_target = 1.0
+                self.update()
+            elif in_btn and not self.button_pressed:
+                self.button_pressed = True
+                self.button_anim_target = 0.92
+                self.update()
+            return  # button presses don't drag the window
+
+        # Pressed in the bar area: promote to drag past threshold
+        if not self.dragging_real:
+            moved = (event.globalPos() - self.click_start_global).manhattanLength()
+            if moved >= self.click_drag_threshold:
+                self.dragging_real = True
+        if self.dragging_real:
             self.move(event.globalPos() - self.drag_position)
             event.accept()
 
     def mouseReleaseEvent(self, event):
-        """Handle mouse release"""
-        self.dragging = False
+        """Release inside button = gulp registered; release after drag = nothing."""
+        if event.button() != Qt.LeftButton:
+            return
 
-    def mouseDoubleClickEvent(self, event):
-        """Double-click to undo"""
-        if event.button() == Qt.LeftButton:
-            self._undo_gulp()
-            event.accept()
+        if self.press_in_button:
+            released_in_button = self._button_rect().contains(event.pos())
+            self.button_pressed = False
+            self.button_anim_target = 1.0
+            if released_in_button:
+                self._register_gulp(event.pos())
+            self.update()
+
+        self.press_in_button = False
+        self.dragging_real = False
+        event.accept()
+
+    def leaveEvent(self, event):
+        """Restore opacity AND clear button hover state."""
+        self.is_hovered = False
+        self.current_opacity = self.normal_opacity
+        if self.button_hover:
+            self.button_hover = False
+        self.update()
 
     def _show_context_menu(self, position):
         """Show context menu"""
@@ -573,12 +803,9 @@ class ProgressBarOverlay(QWidget):
         menu.exec_(position)
 
     def _manual_add_gulp(self):
-        """Manually add gulp"""
-        self.storage.add_gulp()
-        self.reset_reminder()
-        for _ in range(5):
-            self.bubbles.append(Bubble(self.main_bar_width, self.height() - 10))
-        self.update()
+        """Manually add gulp via context menu (uses same path as the click button)."""
+        center = QPoint(self.width() // 2, self.height() // 2)
+        self._register_gulp(center)
 
     def _undo_gulp(self):
         """Undo last gulp"""
