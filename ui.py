@@ -19,6 +19,8 @@ from PyQt5.QtGui import (
 
 from config import CONFIG
 from storage import Storage
+from notes import NotesStore
+from notes_ui import NotesColumn
 
 
 class Bubble:
@@ -51,9 +53,10 @@ class ProgressBarOverlay(QWidget):
     away_status_changed = pyqtSignal(bool)
     settings_requested = pyqtSignal()
 
-    def __init__(self, storage: Storage = None):
+    def __init__(self, storage: Storage = None, notes_store: NotesStore = None):
         super().__init__()
         self.storage = storage or Storage()
+        self.notes_store = notes_store or NotesStore()
         self.drag_position = QPoint()
 
         # Click-vs-drag tracking (manual gulp button)
@@ -108,25 +111,48 @@ class ProgressBarOverlay(QWidget):
         self.setMouseTracking(True)
 
     def _setup_geometry(self):
-        """Set window size and position"""
+        """Set window size and position.
+
+        The overlay reserves room for the notes column at its expanded width
+        even when the column is collapsed; the unused area on the side is
+        kept transparent. The water bar itself stays glued to the screen edge.
+        """
         screen = QApplication.primaryScreen().geometry()
         bar_width = CONFIG["bar_width"]
         margin = CONFIG["bar_margin"]
 
         self.bar_height = screen.height() - 2 * margin
         self.main_bar_width = bar_width
+        self.notes_reserved_width = NotesColumn.EXPANDED_WIDTH
+
+        total_width = self.notes_reserved_width + bar_width
 
         if CONFIG["bar_position"] == "right":
-            x = screen.width() - bar_width - margin
+            x = screen.width() - total_width - margin
         else:
             x = margin
 
-        self.setGeometry(x, margin, bar_width, self.bar_height)
+        self.setGeometry(x, margin, total_width, self.bar_height)
 
     def _connect_signals(self):
         """Connect internal signals"""
         self.gulp_detected.connect(self._on_gulp_visual_burst)
         self.away_status_changed.connect(self._on_away_status_changed)
+
+        # Notes column lives to the left of the water bar
+        self.notes_column = NotesColumn(self.notes_store, parent=self)
+        self.notes_column.geometry_changed.connect(self._relayout_notes_column)
+        self._relayout_notes_column(NotesColumn.COLLAPSED_WIDTH)
+        self.notes_column.show()
+
+    def _relayout_notes_column(self, current_width: int):
+        """Keep the notes column glued to the right edge of its reserved area
+        (i.e. immediately to the left of the water bar) as it animates width."""
+        if not hasattr(self, "notes_column"):
+            return
+        col_h = max(50, self.height() - self.button_height - self.button_gap)
+        x = self.width() - self.main_bar_width - current_width
+        self.notes_column.setGeometry(x, 0, current_width, col_h)
 
     def _setup_animation(self):
         """Setup animation timer"""
@@ -217,21 +243,25 @@ class ProgressBarOverlay(QWidget):
         self.update()
 
     def paintEvent(self, event):
-        """Draw everything"""
+        """Draw the water bar + gulp button. Notes column is a child widget."""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setOpacity(self.current_opacity)
 
         height = self.height()
         bar_area_height = max(50, height - self.button_height - self.button_gap)
+        bar_x = self.width() - self.main_bar_width
 
-        # Main water bar (full width, no reminder bar anymore)
+        # Water bar (right edge)
+        painter.save()
+        painter.translate(bar_x, 0)
         self._draw_main_bar(painter, self.main_bar_width, bar_area_height)
+        painter.restore()
 
-        # Big gulp button at the bottom
+        # Gulp button below the bar
         self._draw_button(painter, self._button_rect())
 
-        # Draw click ripples on top of everything (widget coords)
+        # Click ripples (only used over the bar/button)
         self._draw_ripples(painter)
 
     def _draw_main_bar(self, painter, width, height):
@@ -398,12 +428,24 @@ class ProgressBarOverlay(QWidget):
             painter.fillRect(0, water_top, int(width * 0.4), progress_height, reflection_gradient)
 
     def _button_rect(self) -> QRectF:
-        """Bounding rect of the big gulp button (in widget coords)."""
+        """Bounding rect of the big gulp button (in widget coords).
+
+        Lives directly under the water bar, sharing its x range."""
         return QRectF(
-            0,
+            self.width() - self.main_bar_width,
             self.height() - self.button_height,
-            self.width(),
+            self.main_bar_width,
             self.button_height
+        )
+
+    def _bar_area_rect(self) -> QRectF:
+        """Vertical strip of the water bar (above the button)."""
+        bar_area_height = max(50, self.height() - self.button_height - self.button_gap)
+        return QRectF(
+            self.width() - self.main_bar_width,
+            0,
+            self.main_bar_width,
+            bar_area_height
         )
 
     def _draw_button(self, painter, rect: QRectF):
@@ -544,8 +586,18 @@ class ProgressBarOverlay(QWidget):
         QToolTip.showText(self.mapToGlobal(QPoint(0, 0)), tooltip, self)
         self.update()
 
+    def _is_in_bar_zone(self, pos) -> bool:
+        """True if pos is in the water bar / gulp button strip (not the
+        transparent area reserved for the notes column)."""
+        bar_x = self.width() - self.main_bar_width
+        return pos.x() >= bar_x
+
     def mousePressEvent(self, event):
-        """Press on button arms a gulp; press on bar arms a drag."""
+        """Press on button arms a gulp; press on bar arms a drag.
+        Clicks in the transparent left area are ignored (notes column
+        owns those, or they're truly empty when the column is collapsed)."""
+        if not self._is_in_bar_zone(event.pos()):
+            return  # let the click die quietly
         if event.button() == Qt.LeftButton:
             self.click_start_global = event.globalPos()
             self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
