@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import (
     Qt, QPropertyAnimation, QEasingCurve, QRectF, QSize, QPoint,
-    QDateTime, pyqtSignal
+    QDateTime, QTimer, pyqtSignal
 )
 from PyQt5.QtGui import (
     QPainter, QColor, QPen, QFont, QPainterPath, QBrush,
@@ -136,8 +136,23 @@ class NoteCard(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
 
         rect = self.rect().adjusted(0, 1, -1, -1)
+        priority_color = QColor(PRIORITY_COLOR.get(self.note.priority, PRIORITY_COLOR[PRIORITY_TODAY]))
 
-        # Drop shadow (subtle)
+        # Collapsed = priority chip only. Just enough color to say "tem nota
+        # ativa aqui". No text, no badge, no buttons. Hover expands to reveal.
+        if not self.expanded:
+            chip_path = QPainterPath()
+            chip_rect = QRectF(rect.x(), rect.y(), rect.width(), rect.height())
+            chip_path.addRoundedRect(chip_rect, 5, 5)
+            painter.fillPath(chip_path, priority_color)
+            # Subtle inner highlight for a tactile look
+            highlight = QPainterPath()
+            highlight.addRoundedRect(QRectF(rect.x() + 1, rect.y() + 1, rect.width() - 2, max(1, rect.height() // 3)), 4, 4)
+            painter.fillPath(highlight, QColor(255, 255, 255, 50))
+            return
+
+        # Expanded = full sticky-note look with title, body, deadline, ✓.
+        # Drop shadow
         shadow = QPainterPath()
         shadow.addRoundedRect(QRectF(rect.x() + 1, rect.y() + 2, rect.width(), rect.height()), 6, 6)
         painter.fillPath(shadow, QColor(0, 0, 0, 50))
@@ -148,7 +163,6 @@ class NoteCard(QWidget):
         painter.fillPath(bg_path, STICKY_BG)
 
         # Left priority border
-        priority_color = QColor(PRIORITY_COLOR.get(self.note.priority, PRIORITY_COLOR[PRIORITY_TODAY]))
         painter.fillRect(
             QRectF(rect.x(), rect.y(), self.LEFT_BORDER_WIDTH, rect.height()),
             priority_color
@@ -159,23 +173,21 @@ class NoteCard(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawPath(bg_path)
 
-        # Text area (right of left border, with padding)
         pad_l = self.LEFT_BORDER_WIDTH + 8
         pad_r = 8
         pad_t = 6
         text_width = max(20, rect.width() - pad_l - pad_r)
 
-        # Title
-        painter.setPen(QPen(QColor(40, 40, 40)))
+        # Title (no truncation; word-wrap inside the title row)
         title_font = QFont("Segoe UI", 9)
         title_font.setBold(True)
         painter.setFont(title_font)
-
+        painter.setPen(QPen(QColor(40, 40, 40)))
         fm = QFontMetrics(title_font)
-        elided_title = fm.elidedText(self.note.title or "(sem título)", Qt.ElideRight, text_width)
-        painter.drawText(int(rect.x() + pad_l), int(rect.y() + pad_t + fm.ascent()), elided_title)
+        title_rect = QRectF(rect.x() + pad_l, rect.y() + pad_t, text_width, fm.height() + 2)
+        painter.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, self.note.title or "(sem título)")
 
-        # Deadline badge (top right) — only if urgent (< 24h)
+        # Deadline badge (top-right) — urgent only
         deadline_human = _humanize_deadline(self.note.deadline)
         if deadline_human and _is_urgent_deadline(self.note.deadline):
             badge_font = QFont("Segoe UI", 7, QFont.Bold)
@@ -189,8 +201,8 @@ class NoteCard(QWidget):
             painter.setPen(QColor(255, 255, 255))
             painter.drawText(badge_rect, Qt.AlignCenter, deadline_human)
 
-        # Expanded content: body + complete button
-        if self.expanded and rect.height() > 50:
+        # Body
+        if rect.height() > 50:
             body_font = QFont("Segoe UI", 8)
             painter.setFont(body_font)
             painter.setPen(QPen(QColor(70, 70, 70)))
@@ -200,10 +212,9 @@ class NoteCard(QWidget):
                 text_width - 30,  # leave room for ✓ button
                 rect.height() - pad_t - fm.height() - 6 - 4
             )
-            body_text = self.note.body or ""
-            painter.drawText(body_rect, Qt.AlignLeft | Qt.TextWordWrap, body_text)
+            painter.drawText(body_rect, Qt.AlignLeft | Qt.TextWordWrap, self.note.body or "")
 
-            # Complete button
+            # Complete button (✓)
             btn_rect = self._complete_btn_rect()
             btn_path = QPainterPath()
             btn_path.addEllipse(btn_rect)
@@ -393,35 +404,56 @@ class NotesColumn(QWidget):
         self._width_anim.setEasingCurve(QEasingCurve.InOutCubic)
         self._width_anim.valueChanged.connect(self._on_width_anim_tick)
 
+        # Debounced collapse: leaveEvent schedules a collapse, enterEvent
+        # cancels it. Kills brief leave→enter flicker at edges and during
+        # animation transitions.
+        self._collapse_timer = QTimer(self)
+        self._collapse_timer.setSingleShot(True)
+        self._collapse_timer.setInterval(180)
+        self._collapse_timer.timeout.connect(lambda: self._set_expanded(False))
+
     def _on_width_anim_tick(self, val):
         w = int(val)
         self.setMinimumWidth(w)
         self.geometry_changed.emit(w)
 
+        # The "+" button is anchored to the TOP of the column so it never
+        # moves when cards expand on hover (which would otherwise create a
+        # nasty hover-flicker loop).
         self.add_btn = QPushButton("+", self)
         self.add_btn.setToolTip("Nova nota")
-        self.add_btn.setFixedHeight(28)
+        self.add_btn.setFixedHeight(30)
+        self.add_btn.setCursor(Qt.PointingHandCursor)
         self.add_btn.setStyleSheet(
             "QPushButton {"
-            "  background: rgba(255, 255, 255, 200);"
-            "  color: #444;"
-            "  border: 1px dashed #888;"
-            "  border-radius: 6px;"
-            "  font-size: 14px;"
+            "  background: rgba(255, 244, 163, 130);"
+            "  color: #7a6a20;"
+            "  border: 1px solid rgba(180, 160, 60, 120);"
+            "  border-radius: 5px;"
+            "  font-size: 18px;"
             "  font-weight: bold;"
+            "  padding: 0px;"
             "}"
             "QPushButton:hover {"
-            "  background: rgba(255, 255, 255, 240);"
-            "  color: #222;"
+            "  background: rgba(255, 244, 163, 230);"
+            "  color: #4a3a00;"
+            "  border: 1px solid rgba(180, 160, 60, 220);"
+            "}"
+            "QPushButton:pressed {"
+            "  background: rgba(240, 220, 130, 240);"
             "}"
         )
         self.add_btn.clicked.connect(self._on_create)
 
         self.refresh()
 
+    # Public alias so the overlay context menu can trigger creation.
+    def create_new_note(self):
+        self._on_create()
+
     def refresh(self):
         """Rebuild the column from scratch. Cheap for small note counts."""
-        # Clear *every* layout item (cards, add button, stretches).
+        # Clear every layout item (cards + add button + stretches).
         while self._layout.count():
             item = self._layout.takeAt(0)
             widget = item.widget()
@@ -429,7 +461,10 @@ class NotesColumn(QWidget):
                 widget.deleteLater()
         self.cards.clear()
 
-        # Re-add cards in priority order
+        # Top: "+" button — fixed position, doesn't move when cards expand.
+        self._layout.addWidget(self.add_btn)
+
+        # Cards in priority order, below the +.
         for note in self.store.list_active():
             card = NoteCard(note, self)
             card.completed.connect(self._on_card_completed)
@@ -438,8 +473,7 @@ class NotesColumn(QWidget):
             self._layout.addWidget(card)
             self.cards.append(card)
 
-        # Bottom: add button + stretch (so cards are anchored to the top)
-        self._layout.addWidget(self.add_btn)
+        # Stretch at the bottom so cards stay anchored to the top.
         self._layout.addStretch(1)
 
     def _set_expanded(self, expanded: bool):
@@ -459,11 +493,16 @@ class NotesColumn(QWidget):
             card.set_expanded(expanded)
 
     def enterEvent(self, event):
+        # Cancel any pending collapse (we're back inside the column).
+        self._collapse_timer.stop()
         self._set_expanded(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        self._set_expanded(False)
+        # Don't collapse immediately. If we re-enter within the debounce
+        # window (mouse jitter, animation transition, brief excursion to a
+        # child boundary), the timer is cancelled and the column stays open.
+        self._collapse_timer.start()
         super().leaveEvent(event)
 
     # -- actions ---------------------------------------------------------

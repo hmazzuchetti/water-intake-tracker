@@ -571,19 +571,9 @@ class ProgressBarOverlay(QWidget):
         painter.restore()
 
     def enterEvent(self, event):
-        """Mouse enter - show tooltip. Opacity stays full so the gulp button
-        remains clearly visible/clickable. The original see-through behavior
-        will become moot once the bar registers as a Windows AppBar."""
+        """Mouse enter — no tooltip (it conflicts visually with the notes
+        column overlay). Stats are still available in the tray icon."""
         self.is_hovered = True
-
-        ml_total, goal_ml, percentage = self.storage.get_progress()
-        glasses = self.storage.get_glasses()
-
-        status = " (Away)" if self.is_away else ""
-        tooltip = f"{ml_total}ml / {goal_ml}ml ({percentage:.1f}%){status}\n"
-        tooltip += f"{glasses} goles registrados"
-
-        QToolTip.showText(self.mapToGlobal(QPoint(0, 0)), tooltip, self)
         self.update()
 
     def _is_in_bar_zone(self, pos) -> bool:
@@ -679,6 +669,12 @@ class ProgressBarOverlay(QWidget):
 
         menu.addSeparator()
 
+        new_note_action = QAction("📝 Nova nota...", self)
+        new_note_action.triggered.connect(self._open_new_note)
+        menu.addAction(new_note_action)
+
+        menu.addSeparator()
+
         add_action = QAction("Add gulp (+100ml)", self)
         add_action.triggered.connect(self._manual_add_gulp)
         menu.addAction(add_action)
@@ -727,6 +723,11 @@ class ProgressBarOverlay(QWidget):
             self.update()
         else:
             print("[UNDO] Nothing to undo")
+
+    def _open_new_note(self):
+        """Open the new-note dialog via the notes column."""
+        if hasattr(self, "notes_column"):
+            self.notes_column.create_new_note()
 
     def _reset_progress(self):
         """Reset today's progress"""
