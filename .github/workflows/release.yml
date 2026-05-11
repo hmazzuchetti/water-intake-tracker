@@ -11,6 +11,11 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# softprops/action-gh-release precisa de contents:write pra criar a Release.
+# O default do GITHUB_TOKEN em repos modernos é read-only.
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
