@@ -1,0 +1,90 @@
+name: Build & Release Windows EXE
+
+# Dispara em duas situações:
+#   1. push de uma tag v* → builda + cria GitHub Release com o .exe anexado
+#   2. workflow_dispatch (botão "Run workflow" no GitHub) → builda só pra
+#      validar o pipeline, sem release. Útil pra testar mudanças no spec.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Ensure icon.ico exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "icon.ico")) {
+            Write-Host "icon.ico ausente — convertendo de icon.webp..."
+            python convert_icon.py
+          } else {
+            Write-Host "icon.ico já presente."
+          }
+
+      - name: Build executable (PyInstaller)
+        run: pyinstaller WaterIntakeTracker.spec --noconfirm
+
+      - name: Inspect build output
+        shell: pwsh
+        run: |
+          Get-ChildItem dist
+          if (Test-Path "dist\WaterIntakeTracker.exe") {
+            $sizeMb = (Get-Item "dist\WaterIntakeTracker.exe").Length / 1MB
+            Write-Host ("EXE size: {0:N1} MB" -f $sizeMb)
+          } else {
+            Write-Error "Build artifact missing!"
+            exit 1
+          }
+
+      - name: Compute artifact name
+        id: meta
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $tag = $env:GITHUB_REF -replace 'refs/tags/', ''
+            echo "tag=$tag" >> $env:GITHUB_OUTPUT
+            echo "artifact_name=WaterIntakeTracker-$tag" >> $env:GITHUB_OUTPUT
+          } else {
+            $sha = $env:GITHUB_SHA.Substring(0,7)
+            echo "tag=manual-$sha" >> $env:GITHUB_OUTPUT
+            echo "artifact_name=WaterIntakeTracker-manual-$sha" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}
+          path: dist/WaterIntakeTracker.exe
+          if-no-files-found: error
+
+      - name: Create GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/WaterIntakeTracker.exe
+          name: Water Intake Tracker ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
