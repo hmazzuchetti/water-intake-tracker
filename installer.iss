@@ -10,11 +10,11 @@
 ;   Ou via linha de comando: iscc installer.iss
 
 #define MyAppName "Water Intake Tracker"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "AI Drink Water"
-#define MyAppURL "https://github.com/seu-usuario/AI-drink-water"
+#define MyAppURL "https://github.com/hmazzuchetti/water-intake-tracker"
 #define MyAppExeName "WaterIntakeTracker.exe"
-#define MyAppDescription "Acompanhe sua hidratacao com inteligencia artificial"
+#define MyAppDescription "Tracker minimalista de hidratacao com sticky notes priorizados"
 
 [Setup]
 ; Identificador unico do app (NAO ALTERE depois de publicar!)

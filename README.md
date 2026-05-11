@@ -1,64 +1,88 @@
 # Water Intake Tracker
 
-A desktop app that uses your webcam to detect when you drink water and tracks your daily hydration.
+A minimalist desktop app that lives on the side of your screen, tracks
+your daily water intake with a single big-fat-button click, and shows
+priority-sorted sticky notes next to the water bar.
+
+> **2.0 rewrite (May 2026):** webcam detection, AI mascot, and pop-up
+> reminders were removed. The app is now a thin vertical bar with a
+> manual gulp button and an embedded sticky-notes column. See
+> [`docs/REFORMULACAO.md`](docs/REFORMULACAO.md) for the full design.
 
 ## Features
 
-- Automatic drink detection using computer vision
-- Daily progress tracking with visual overlay
-- Reminder system that alerts you to drink
-- Cup/bottle detection to reduce false positives
-- Away detection (pauses when you leave your desk)
+- **Manual gulp button** — click the big drop-shaped button at the
+  bottom of the bar. Ripple + splash + bubbles + sound. No webcam.
+- **Animated water bar** — wave, bubbles, ML marker labels.
+- **Sticky notes column** — sits next to the bar, collapsed to colored
+  chips by default. Hover anywhere on the column to expand.
+- **3-level priority** — Agora (red), Hoje (amber), Depois (gray).
+  Auto-sorted by priority then deadline.
+- **Deadlines** — optional per note. Urgent badges appear when <24h.
+- **JSON persistence** — `data/progress.json` (hydration, resets daily)
+  and `data/notes.json` (notes, never reset).
+- **System tray** — single-click toggles bar; double-click opens
+  Settings; right-click for menu.
 
 ## Download
 
-Download the latest release from the [Releases page](../../releases).
+Pre-built `WaterIntakeTracker.exe` is published on the
+[Releases page](../../releases).
 
-## Windows Security Note
+### Windows SmartScreen note
 
-When you first run the app, Windows SmartScreen may show a warning. This is normal for any software without an expensive code signing certificate.
-
-**To run:**
-1. Right-click `WaterIntakeTracker.exe`
-2. Click **Properties**
-3. Check **Unblock** at the bottom
-4. Click **OK**
-5. Double-click to run
-
-Or when you see the blue SmartScreen:
-- Click **More info** → **Run anyway**
+Unsigned exe — Windows may warn on first run. Right-click the file →
+Properties → check "Unblock", or click "More info → Run anyway" on
+the SmartScreen dialog.
 
 ## Requirements
 
 - Windows 10/11
-- Webcam
+
+That's it. No webcam, no Python, no Ollama.
 
 ## Usage
 
-1. Launch the app - a settings window will appear
-2. Select your webcam and click **Test Camera** to verify
-3. Configure your daily water goal
-4. Click **Save & Start**
+1. Launch the app — a Settings dialog opens (skip with previous values
+   on subsequent launches).
+2. Set your daily goal (ml) and gulp size, save.
+3. The bar appears glued to the right edge of the screen.
+4. **Click the drop button** to register a gulp.
+5. **Hover the notes column** (the strip to the left of the bar) to
+   expand it. Click "+" at the top to add a note.
 
-The app shows a progress bar on your screen:
-- **Blue bar**: Your daily water intake progress
-- **Green→Red bar**: Time since last drink (reminder)
+### Controls
 
-**Controls:**
-- Right-click for menu
-- Double-click to undo last detection
-- Drag to move the bar
+- Click drop button → +1 gulp
+- Click note card → edit it
+- Click ✓ on expanded card → complete (removes from active list)
+- Right-click bar → menu (new note, add/undo gulp, reset, settings,
+  exit, etc.)
+- Drag the bar to reposition (snaps stay disabled — use "Move to
+  other side" in the menu for the canonical flip)
+- Tray icon: single-click hide/show; double-click open Settings;
+  right-click for menu
 
-## Building from Source
+## Data
+
+Both files are plain JSON, editable by hand if you really need to:
+
+- `data/progress.json` — today's hydration (resets at midnight)
+- `data/notes.json` — sticky notes (never reset, completed notes are
+  archived in-file rather than deleted)
+
+## Building from source
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
-
-# Build executable
-python build_exe.py
+python main.py                 # run from source
+python build_installer.py      # build .exe + Inno Setup installer
 ```
+
+Dependencies: `PyQt5`, `Pillow` (icon conversion only). The "no
+webcam, no AI" stack is intentional — the cleanup commit history on
+the `refactor/cleanup-and-sticky-notes` branch documents why.
 
 ## License
 
-MIT License - Feel free to use and modify!
+MIT — feel free to fork and tinker.
