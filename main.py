@@ -215,12 +215,12 @@ class WaterTrackerApp:
         glasses = self.storage.get_glasses()
 
         tooltip = (
-            f"Water Tracker\n"
+            f"Water Tracker v{__version__}\n"
             f"{glasses} goles ({ml_total}ml / {goal_ml}ml)\n"
             f"{percentage:.0f}% da meta"
         )
         self.tray_icon.setToolTip(tooltip)
-        self.status_action.setText(f"{glasses} goles - {percentage:.0f}%")
+        self.status_action.setText(f"{glasses} goles - {percentage:.0f}% (v{__version__})")
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:

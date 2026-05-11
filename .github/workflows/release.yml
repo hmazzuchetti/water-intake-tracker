@@ -30,36 +30,42 @@ jobs:
           python-version: '3.13'
           cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Ensure icon.ico exists
-        shell: pwsh
-        run: |
-          if (-not (Test-Path "icon.ico")) {
-            Write-Host "icon.ico ausente — convertendo de icon.webp..."
-            python convert_icon.py
-          } else {
-            Write-Host "icon.ico já presente."
-          }
+      - name: Install Inno Setup
+        run: choco install -y innosetup --no-progress
 
-      - name: Build executable (PyInstaller)
-        run: pyinstaller WaterIntakeTracker.spec --noconfirm
+      - name: Build executable + Inno Setup installer
+        # build_installer.py: PyInstaller → dist/WaterIntakeTracker.exe,
+        # depois sync_resources, depois ISCC → installer_output/...Setup_<version>.exe
+        run: python build_installer.py
 
       - name: Inspect build output
         shell: pwsh
         run: |
+          Write-Host "=== dist/ ==="
           Get-ChildItem dist
-          if (Test-Path "dist\WaterIntakeTracker.exe") {
-            $sizeMb = (Get-Item "dist\WaterIntakeTracker.exe").Length / 1MB
-            Write-Host ("EXE size: {0:N1} MB" -f $sizeMb)
-          } else {
-            Write-Error "Build artifact missing!"
+          Write-Host "=== installer_output/ ==="
+          Get-ChildItem installer_output
+          if (-not (Test-Path "dist\WaterIntakeTracker.exe")) {
+            Write-Error "Standalone .exe missing!"
             exit 1
           }
+          $installer = Get-ChildItem installer_output -Filter "WaterIntakeTracker_Setup_*.exe" | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "Installer .exe missing!"
+            exit 1
+          }
+          $exeMb = (Get-Item "dist\WaterIntakeTracker.exe").Length / 1MB
+          $installerMb = $installer.Length / 1MB
+          Write-Host ("Standalone EXE: {0:N1} MB" -f $exeMb)
+          Write-Host ("Installer: {0} ({1:N1} MB)" -f $installer.Name, $installerMb)
+          echo "INSTALLER_PATH=$($installer.FullName)" >> $env:GITHUB_ENV
+          echo "INSTALLER_NAME=$($installer.Name)" >> $env:GITHUB_ENV
 
       - name: Compute artifact name
         id: meta
@@ -75,18 +81,30 @@ jobs:
             echo "artifact_name=WaterIntakeTracker-manual-$sha" >> $env:GITHUB_OUTPUT
           }
 
-      - name: Upload artifact
+      - name: Upload standalone .exe (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.meta.outputs.artifact_name }}
+          name: ${{ steps.meta.outputs.artifact_name }}-portable
           path: dist/WaterIntakeTracker.exe
+          if-no-files-found: error
+
+      - name: Upload installer (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.artifact_name }}-installer
+          path: installer_output/WaterIntakeTracker_Setup_*.exe
           if-no-files-found: error
 
       - name: Create GitHub Release (tag pushes only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/WaterIntakeTracker.exe
+          # Anexa AMBOS: o portable + o installer (este é o que o usuário
+          # normalmente quer rodar — instala em LocalAppData\Programs com
+          # atalho no Menu Iniciar, faz upgrade in-place, atualiza tray).
+          files: |
+            installer_output/WaterIntakeTracker_Setup_*.exe
+            dist/WaterIntakeTracker.exe
           name: Water Intake Tracker ${{ steps.meta.outputs.tag }}
           generate_release_notes: true
           draft: false

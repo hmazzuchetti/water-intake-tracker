@@ -19,6 +19,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 
 from config import CONFIG
+from version import __version__
 
 
 def get_config_path():
@@ -148,6 +149,11 @@ class SettingsDialog(QDialog):
         title.setFont(QFont("Arial", 16, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
+
+        version_label = QLabel(f"v{__version__}")
+        version_label.setAlignment(Qt.AlignCenter)
+        version_label.setStyleSheet("color: #999; font-size: 11px; margin-bottom: 4px;")
+        layout.addWidget(version_label)
 
         if self.first_run:
             welcome = QLabel("Welcome! Let's configure your settings.")

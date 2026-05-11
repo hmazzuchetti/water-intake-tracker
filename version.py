@@ -8,4 +8,4 @@ Bump rules (Semantic Versioning 2.0.0):
 When bumping here, also update `installer.iss` (`MyAppVersion`).
 """
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"

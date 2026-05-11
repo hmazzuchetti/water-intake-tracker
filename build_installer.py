@@ -27,7 +27,10 @@ from pathlib import Path
 
 # Configuracoes
 APP_NAME = "WaterIntakeTracker"
-VERSION = "1.0.0"
+try:
+    from version import __version__ as VERSION
+except ImportError:
+    VERSION = "0.0.0"  # fallback if version.py missing
 
 # Pastas de recursos que precisam estar ao lado do exe
 RESOURCE_FOLDERS = ["sounds", "data"]
