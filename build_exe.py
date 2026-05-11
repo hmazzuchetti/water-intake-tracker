@@ -92,10 +92,7 @@ def main():
             "--add-data=sounds;sounds",  # Include sounds folder
             "--add-data=data;data",      # Include data folder
             "--hidden-import=winsound",
-            "--hidden-import=mediapipe",
-            "--hidden-import=cv2",
             "--hidden-import=PyQt5",
-            "--collect-data=mediapipe",
         ]
 
         # Add icon if available
@@ -103,10 +100,6 @@ def main():
             cmd.append(f"--icon={icon_path}")
         else:
             cmd.append("--icon=NONE")
-
-        # Add models folder if it exists
-        if os.path.exists("models"):
-            cmd.append("--add-data=models;models")
 
         cmd.append("main.py")
 

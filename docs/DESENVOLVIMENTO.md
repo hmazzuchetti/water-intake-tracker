@@ -23,37 +23,83 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 
 ## Features Planejadas/Backlog
 
-### Próxima Feature
-- [ ] Toggle de som de gole (separado dos sons do mascote)
-- [ ] Mascote mais criativo (reestruturar prompt, cache de mensagens recentes)
-- [ ] Lembrete de levantar e alongar (timer + mascote)
+### Próxima Sessão (sugerido pelo council na Reformulação)
+- [ ] **CI/CD do .exe** — GitHub Actions builda + zipa o exe ao push de tag (paga juros compostos: toda mudança futura testada no executável real sem rodar `build_installer.py` na mão)
+- [ ] **Bug do tray icon** não aparecer ao lado do relógio
+- [ ] **Reformular menu inteiro** (cosmético)
+- [ ] **Windows AppBar** — fazer a barra reservar espaço de tela, igual à barra de tarefas. Snippet pronto no [`REFORMULACAO.md`](REFORMULACAO.md)
 
-### Em Refinamento
-- [✅] **System Tray** - COMPLETO!
-- [✅] **Sistema de mensagens com IA** - COMPLETO!
-  - ✅ Mensagens geradas por Ollama ou fallback
-  - ✅ Balão de texto flutuante com mascote
-  - ✅ Personalidade configurável
-  - ✅ Contexto de progresso
-  - ✅ Editor de personalidade no menu de configurações
-  - ✅ Galeria de mascotes pré-prontos (7 mascotes)
-  - ✅ 6 personalidades diferentes
-  - ✅ Sons diferentes por tipo de mensagem
+### Polish sticky notes (TODOs conscientemente adiados na Fase 3)
+- [ ] Edit inline (clica no card e edita ali mesmo, sem dialog)
+- [ ] Drag-and-drop pra reordenar manualmente
+- [ ] Animação de reordenação quando nota muda de prioridade
+- [ ] Notificação Windows quando deadline <24h
+- [ ] Recurring notes (semanal, mensal)
+- [ ] Tela de notas completadas (histórico)
 
-### Ideias para o Futuro
-- [ ] **Histórico visual** - Gráfico dos últimos 7 dias de consumo
-- [ ] **Notificações de milestone** - Alertas do Windows ao atingir 25%, 50%, 75%, 100% da meta
-- [ ] **Sons customizáveis** - Diferentes sons para diferentes conquistas
-- [ ] **Estatísticas** - Resumo semanal/mensal de consumo
-- [ ] **Ajuste de meta inteligente** - Sugerir beber mais em dias quentes (integração com API de clima)
-- [ ] **Temas visuais** - Modo escuro/claro, cores customizáveis para a água
-- [ ] **Sistema de conquistas** - Gamificação com badges e streaks
-- [ ] **Exportar dados** - Salvar histórico em CSV para análise
-- [ ] **Estatísticas detalhadas** - Horários de pico, padrões de consumo
-- [ ] **Meta adaptativa** - Ajustar meta baseado em peso/altura/atividade física
-- [ ] **Integração com wearables** - Conectar com apps de saúde
+### Ideias para o Futuro (válidas pós-reformulação)
+- [ ] **Histórico visual** — Gráfico dos últimos 7 dias de consumo
+- [ ] **Notificações de milestone** — Toast do Windows ao atingir 25/50/75/100% da meta
+- [ ] **Estatísticas semanal/mensal** — Resumo de consumo
+- [ ] **Temas visuais** — Dark/light, cores customizáveis para a água
+- [ ] **Exportar dados** — CSV pra análise
+- [ ] **Meta adaptativa** — Ajustar baseado em peso/altura/atividade
+- [ ] **Streak / gamificação** — Glow dourado quando bate meta N dias seguidos
 
 ## Log de Desenvolvimento
+
+### 2026-05-11 — Reformulação 2.0 (limpeza + sticky notes)
+**Status:** ✅ COMPLETO — branch `refactor/cleanup-and-sticky-notes`
+
+Reformulação iniciada porque o app, após meses de uso diário, estava
+atrapalhando mais do que ajudando: mascote + IA quebrando foco com
+pop-up + som, webcam falhando e alugando a câmera, sub-barra vermelha
+de lembrete poluindo a tela.
+
+Plano e decisões consolidadas em [`REFORMULACAO.md`](REFORMULACAO.md).
+Council multi-agente (UX × 3, arquitetura × 2, produto, research) foi
+usado pra alinhar decisões antes de tocar em código. Padrão a repetir
+em reformulações grandes.
+
+**Commits da branch:**
+- `7101529` docs: Plano de reformulação
+- `12d9e2f` feat: Fase 1 — botão manual de gole + microinteração
+- `87637f4` feat: Fase 2 — purga total de IA, mascote, webcam, lembrete
+- `ca0981e` feat: Fase 3 — sticky notes embutidos com hover-expand
+- `ecf82bd` fix: polish da Fase 3 — hover-flicker + chip-only collapsed cards
+
+**Diff agregado:** ~5000 linhas deletadas, ~1100 inseridas. Bundle do
+.exe deve cair de ~400MB → ~60MB.
+
+**O que entra:**
+- Botão "gordo" de gole com microinteração (ripple, splash, bolhas, plop)
+- Coluna de sticky notes embutida ao lado da barra, hover-expand
+- 3 níveis de prioridade (Agora / Hoje / Depois) em vez de P0–P5
+- Persistência separada em `data/notes.json`
+- Debounce de 180ms no collapse → fim do flicker quando mouse roça borda
+
+**O que sai:**
+- `detector.py`, `vision_detector.py` (MediaPipe + Ollama vision)
+- `ai_messages.py`, `message_bubble.py` (IA + mascote)
+- `personalities/`, `mascots/`, `models/` (pastas)
+- Sons de mascote (mantém só `gulp.wav`)
+- Sub-barra vermelha de lembrete
+- Tabs Detection/Reminder/Mascote no settings (sobra só General + Help)
+- `mediapipe`, `opencv-python`, `ollama` do `requirements.txt`
+
+**Investigação adiada:**
+- **Windows AppBar (`SHAppBarMessage`)** — viável via ctypes/PyQt5,
+  snippet pronto. Vira sessão dedicada.
+
+**Lição meta-aprendida:**
+> "App em uso diário tem feedback honesto que protótipo não tem."
+
+Tudo que foi adicionado entre jan-mar/2026 (mascote/IA/AI Vision) era
+tecnicamente impressionante mas o uso real corrigiu — o ciclo "usar →
+tirar o que incomoda" é mais saudável que adicionar incremental sem
+auditar.
+
+---
 
 ### 2026-03-18 - Deteccao por AI Vision (Ollama)
 **Status:** ✅ COMPLETO!

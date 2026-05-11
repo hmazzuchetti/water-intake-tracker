@@ -10,11 +10,11 @@
 ;   Ou via linha de comando: iscc installer.iss
 
 #define MyAppName "Water Intake Tracker"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "AI Drink Water"
-#define MyAppURL "https://github.com/seu-usuario/AI-drink-water"
+#define MyAppURL "https://github.com/hmazzuchetti/water-intake-tracker"
 #define MyAppExeName "WaterIntakeTracker.exe"
-#define MyAppDescription "Acompanhe sua hidratacao com inteligencia artificial"
+#define MyAppDescription "Tracker minimalista de hidratacao com sticky notes priorizados"
 
 [Setup]
 ; Identificador unico do app (NAO ALTERE depois de publicar!)
@@ -76,9 +76,6 @@ Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Pastas de recursos
 Source: "sounds\*"; DestDir: "{app}\sounds"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "mascots\*"; DestDir: "{app}\mascots"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.md,README*"
-Source: "personalities\*"; DestDir: "{app}\personalities"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "models\*"; DestDir: "{app}\models"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Pasta de dados (vazia inicialmente, criada pelo app)
 Source: "data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
