@@ -10,7 +10,7 @@
 ;   Ou via linha de comando: iscc installer.iss
 
 #define MyAppName "Water Intake Tracker"
-#define MyAppVersion "2.0.2"
+#define MyAppVersion "2.0.3"
 #define MyAppPublisher "AI Drink Water"
 #define MyAppURL "https://github.com/hmazzuchetti/water-intake-tracker"
 #define MyAppExeName "WaterIntakeTracker.exe"
@@ -80,8 +80,9 @@ Source: "sounds\*"; DestDir: "{app}\sounds"; Flags: ignoreversion recursesubdirs
 ; Pasta de dados (vazia inicialmente, criada pelo app)
 Source: "data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
 
-; Config padrao (so copia se nao existir - preserva config do usuario)
-Source: "user_config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
+; user_config.json não é shippado — settings_ui.py gera na primeira
+; execução com os defaults do config.py + escolhas do usuário no dialog
+; inicial. Shipar um seria sobrescrever / criar conflito de versionamento.
 
 [Icons]
 ; Menu Iniciar
