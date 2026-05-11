@@ -18,6 +18,7 @@ CONFIG = {
 
     # Sound
     "sound_enabled": True,
+    "gulp_volume": 50,         # 0..100 — QSoundEffect volume
     "gulp_sound": "gulp.wav",
     "sounds_dir": "sounds",
 

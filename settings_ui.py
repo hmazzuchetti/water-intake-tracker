@@ -13,7 +13,8 @@ import winreg
 from PyQt5.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QSpinBox, QComboBox, QCheckBox, QPushButton,
-    QGroupBox, QMessageBox, QTabWidget, QWidget, QTextBrowser
+    QGroupBox, QMessageBox, QTabWidget, QWidget, QTextBrowser,
+    QSlider
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
@@ -54,7 +55,7 @@ def save_user_config(config: dict) -> bool:
     saveable_keys = [
         "goal_ml", "ml_per_gulp",
         "bar_position", "bar_width",
-        "sound_enabled",
+        "sound_enabled", "gulp_volume",
         "start_with_windows", "first_run",
     ]
     to_save = {k: config[k] for k in saveable_keys if k in config}
@@ -225,9 +226,28 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(appearance_group)
 
-        # Sound
+        # Sound (checkbox + volume slider)
+        sound_group = QGroupBox("Som")
+        sound_layout = QGridLayout(sound_group)
+
         self.sound_check = QCheckBox("Tocar som ao registrar gole")
-        layout.addWidget(self.sound_check)
+        sound_layout.addWidget(self.sound_check, 0, 0, 1, 3)
+
+        sound_layout.addWidget(QLabel("Volume:"), 1, 0)
+        self.volume_slider = QSlider(Qt.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setTickInterval(10)
+        self.volume_slider.setTickPosition(QSlider.TicksBelow)
+        sound_layout.addWidget(self.volume_slider, 1, 1)
+
+        self.volume_label = QLabel("50%")
+        self.volume_label.setMinimumWidth(40)
+        self.volume_slider.valueChanged.connect(
+            lambda v: self.volume_label.setText(f"{v}%")
+        )
+        sound_layout.addWidget(self.volume_label, 1, 2)
+
+        layout.addWidget(sound_group)
 
         # Note about restart
         note = QLabel("⚠️ Mudanças em posição / largura aplicam após reiniciar o app.")
@@ -285,6 +305,9 @@ class SettingsDialog(QDialog):
 
         self.width_spin.setValue(self.config.get("bar_width", 30))
         self.sound_check.setChecked(self.config.get("sound_enabled", True))
+        vol = int(self.config.get("gulp_volume", 50))
+        self.volume_slider.setValue(vol)
+        self.volume_label.setText(f"{vol}%")
 
     def _save_and_accept(self):
         self.config["goal_ml"] = self.goal_spin.value()
@@ -292,6 +315,7 @@ class SettingsDialog(QDialog):
         self.config["bar_position"] = "right" if self.position_combo.currentIndex() == 0 else "left"
         self.config["bar_width"] = self.width_spin.value()
         self.config["sound_enabled"] = self.sound_check.isChecked()
+        self.config["gulp_volume"] = self.volume_slider.value()
         self.config["first_run"] = False
         self.config["start_with_windows"] = self.start_windows_check.isChecked()
 

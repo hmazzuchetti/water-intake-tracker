@@ -19,6 +19,8 @@ from config import CONFIG
 from storage import Storage
 from ui import ProgressBarOverlay
 from settings_ui import show_settings, load_user_config
+from game import GameStore
+from game_ui import StatsDialog
 from version import __version__
 
 
@@ -68,27 +70,29 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-def play_sound(config):
-    """Play gulp sound if enabled and file exists"""
-    if not config.get("sound_enabled", True):
-        return
-
+def _resolve_sound_path(config) -> str:
+    """Resolve the gulp.wav location (PyInstaller bundle or local). Returns '' if missing."""
     sound_file = config.get("gulp_sound", "gulp.wav")
     sounds_dir = config.get("sounds_dir", "sounds")
+    candidate = get_resource_path(os.path.join(sounds_dir, sound_file))
+    if not os.path.exists(candidate):
+        candidate = os.path.join(sounds_dir, sound_file)
+    return candidate if os.path.exists(candidate) else ""
 
-    sound_path = get_resource_path(os.path.join(sounds_dir, sound_file))
-    if not os.path.exists(sound_path):
-        sound_path = os.path.join(sounds_dir, sound_file)
 
-    if not os.path.exists(sound_path):
-        print(f"Sound file not found: {sound_path}")
+def play_sound_winsound_fallback(config):
+    """Plain winsound playback — no volume control. Used as fallback when
+    QSoundEffect isn't available in the runtime."""
+    if not config.get("sound_enabled", True):
         return
-
+    sound_path = _resolve_sound_path(config)
+    if not sound_path:
+        return
     try:
         import winsound
         winsound.PlaySound(sound_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
     except Exception as e:
-        print(f"Could not play sound: {e}")
+        print(f"[Sound] winsound fallback failed: {e}")
 
 
 class WaterTrackerApp:
@@ -108,7 +112,11 @@ class WaterTrackerApp:
 
         self.config = None
         self.storage = None
+        self.game_store = None
         self.overlay = None
+
+        # Sound
+        self._sound_effect = None  # QSoundEffect instance (volume-controlled)
 
         # System Tray
         self.tray_icon = None
@@ -128,16 +136,73 @@ class WaterTrackerApp:
         CONFIG.update(self.config)
         return True
 
+    def _gulp_volume_norm(self) -> float:
+        return max(0.0, min(1.0, self.config.get("gulp_volume", 50) / 100.0))
+
+    def _setup_sound(self):
+        """Try to set up QSoundEffect for volume-controlled playback.
+        Falls back to winsound (no volume) if QtMultimedia isn't available."""
+        sound_path = _resolve_sound_path(self.config)
+        if not sound_path:
+            print("[Sound] gulp.wav não encontrado")
+            return
+        try:
+            from PyQt5.QtMultimedia import QSoundEffect
+            from PyQt5.QtCore import QUrl
+            eff = QSoundEffect()
+            eff.setSource(QUrl.fromLocalFile(os.path.abspath(sound_path)))
+            eff.setVolume(self._gulp_volume_norm())
+            self._sound_effect = eff
+            print(f"[Sound] QSoundEffect ok (volume {self._gulp_volume_norm():.2f})")
+        except Exception as e:
+            print(f"[Sound] QSoundEffect indisponível, usando winsound: {e}")
+            self._sound_effect = None
+
+    def _play_gulp_sound(self):
+        if not self.config.get("sound_enabled", True):
+            return
+        if self._sound_effect is not None:
+            # Pick up live volume changes from settings dialog
+            self._sound_effect.setVolume(self._gulp_volume_norm())
+            self._sound_effect.play()
+        else:
+            play_sound_winsound_fallback(self.config)
+
     def _on_gulp_registered(self):
         """Handle a manual gulp registered by the overlay button.
 
-        Storage was already updated by the overlay; here we play sound
-        and refresh the tray."""
+        Storage was already updated by the overlay; here we play sound,
+        refresh the tray, and surface gamification events (level-up,
+        achievements, streak) as tray notifications."""
         ml_total, goal_ml, percentage = self.storage.get_progress()
         print(f"[Gulp] {ml_total}ml / {goal_ml}ml ({percentage:.1f}%)")
 
-        play_sound(self.config)
+        self._play_gulp_sound()
         self._update_tray_tooltip()
+
+        # Game feedback via tray
+        events = getattr(self.overlay, "recent_events", {}) or {}
+        if events.get("leveled_up") and self.tray_icon:
+            new_lvl = events.get("new_level", 0)
+            self.tray_icon.showMessage(
+                f"Nível {new_lvl}!",
+                "Você subiu de nível bebendo água.",
+                QSystemTrayIcon.Information, 4000
+            )
+        for ach in events.get("unlocked", []):
+            if self.tray_icon:
+                self.tray_icon.showMessage(
+                    f"Conquista: {ach.get('name', 'Nova conquista')}",
+                    ach.get("desc", ""),
+                    QSystemTrayIcon.Information, 4000
+                )
+        if events.get("streak_extended") and self.tray_icon and self.game_store:
+            streak = self.game_store.state.current_streak
+            self.tray_icon.showMessage(
+                f"Streak {streak}!",
+                f"{streak} dias seguidos batendo a meta",
+                QSystemTrayIcon.Information, 3000
+            )
 
     def _open_settings(self):
         """Open settings dialog and apply changes that don't need a restart."""
@@ -180,6 +245,10 @@ class WaterTrackerApp:
 
         tray_menu.addSeparator()
 
+        stats_action = QAction("📊 Estatísticas...", self.app)
+        stats_action.triggered.connect(self._open_stats)
+        tray_menu.addAction(stats_action)
+
         self.visibility_action = QAction("Esconder Barra", self.app)
         self.visibility_action.triggered.connect(self._toggle_overlay_visibility)
         tray_menu.addAction(self.visibility_action)
@@ -214,13 +283,20 @@ class WaterTrackerApp:
         ml_total, goal_ml, percentage = self.storage.get_progress()
         glasses = self.storage.get_glasses()
 
+        level_str = ""
+        if self.game_store is not None:
+            try:
+                level_str = f" · Lv. {self.game_store.level()}"
+            except Exception:
+                pass
+
         tooltip = (
-            f"Water Tracker v{__version__}\n"
+            f"Water Tracker v{__version__}{level_str}\n"
             f"{glasses} goles ({ml_total}ml / {goal_ml}ml)\n"
             f"{percentage:.0f}% da meta"
         )
         self.tray_icon.setToolTip(tooltip)
-        self.status_action.setText(f"{glasses} goles - {percentage:.0f}% (v{__version__})")
+        self.status_action.setText(f"{glasses} goles · {percentage:.0f}%{level_str}")
 
     def _on_tray_activated(self, reason):
         if reason == QSystemTrayIcon.DoubleClick:
@@ -238,6 +314,16 @@ class WaterTrackerApp:
             self.overlay.show()
             self.visibility_action.setText("Esconder Barra")
 
+    def _open_stats(self):
+        """Open the gamification stats dialog."""
+        if self.game_store is None or self.storage is None:
+            return
+        try:
+            dlg = StatsDialog(self.game_store, self.storage, parent=None)
+            dlg.exec_()
+        except Exception as e:
+            print(f"[Stats] Erro ao abrir diálogo: {e}")
+
     def _quit_app(self):
         print("[Tray] Quit requested")
         self._shutdown()
@@ -254,14 +340,20 @@ class WaterTrackerApp:
             return 0
 
         self.storage = Storage()
+        self.game_store = GameStore()
 
         ml_total, goal_ml, percentage = self.storage.get_progress()
         print(f"Today's progress: {ml_total}ml / {goal_ml}ml ({percentage:.1f}%)")
         print(f"Goles today: {self.storage.get_glasses()}")
+        print(f"Game state: Lv. {self.game_store.level()} ({self.game_store.state.total_xp} XP, "
+              f"streak: {self.game_store.state.current_streak} dias)")
         print("-" * 50)
 
-        # UI
-        self.overlay = ProgressBarOverlay(self.storage)
+        # Sound setup (QSoundEffect with volume control, winsound fallback)
+        self._setup_sound()
+
+        # UI — share game_store with overlay so the button paints level/progress
+        self.overlay = ProgressBarOverlay(self.storage, game_store=self.game_store)
         self.overlay.settings_requested.connect(self._open_settings)
         self.overlay.gulp_registered.connect(self._on_gulp_registered)
         self.overlay.show()

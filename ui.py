@@ -11,7 +11,7 @@ import time
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QMenu, QAction, QToolTip
 )
-from PyQt5.QtCore import Qt, QPoint, QTimer, pyqtSignal, QRectF
+from PyQt5.QtCore import Qt, QPoint, QPointF, QTimer, pyqtSignal, QRectF
 from PyQt5.QtGui import (
     QPainter, QColor, QLinearGradient, QPen, QFont,
     QBrush, QPainterPath, QRadialGradient
@@ -21,6 +21,7 @@ from config import CONFIG
 from storage import Storage
 from notes import NotesStore
 from notes_ui import NotesColumn
+from game import GameStore
 
 
 class Bubble:
@@ -53,10 +54,12 @@ class ProgressBarOverlay(QWidget):
     away_status_changed = pyqtSignal(bool)
     settings_requested = pyqtSignal()
 
-    def __init__(self, storage: Storage = None, notes_store: NotesStore = None):
+    def __init__(self, storage: Storage = None, notes_store: NotesStore = None,
+                 game_store: GameStore = None):
         super().__init__()
         self.storage = storage or Storage()
         self.notes_store = notes_store or NotesStore()
+        self.game_store = game_store or GameStore()
         self.drag_position = QPoint()
 
         # Click-vs-drag tracking (manual gulp button)
@@ -76,15 +79,26 @@ class ProgressBarOverlay(QWidget):
         self.splash_boost = 0.0     # 0..1, decays per frame; boosts wave amplitude
         self.splash_decay = 0.90
 
-        # Big fat gulp button (lives at the bottom of the overlay)
-        self.button_height = 80
-        self.button_gap = 6         # gap between bar and button
+        # Big circular gulp button (lives at the bottom-right of the overlay).
+        # Diameter is max(60, bar_width) so the button stays chunky even when
+        # the bar itself is narrow.
+        self.button_diameter = max(60, CONFIG.get("bar_width", 30))
+        self.button_gap = 6
         self.button_hover = False
         self.button_pressed = False
         self.press_in_button = False
         self.button_anim_scale = 1.0    # animates on press/release
         self.button_anim_target = 1.0
         self.button_idle_pulse = 0.0    # subtle idle bob
+
+        # Counter pop (number scales up briefly after gulp)
+        self.number_pop = 0.0
+        # Goal glow (golden flash when daily goal is hit / level up)
+        self.goal_glow = 0.0
+
+        # Latest event payload from GameStore.record_gulp — read by main.py
+        # to drive tray notifications (level up, achievements, streak).
+        self.recent_events: dict = {}
 
         # Away mode state (legacy; nothing toggles it now that webcam is gone)
         self.is_away = False
@@ -150,7 +164,7 @@ class ProgressBarOverlay(QWidget):
         (i.e. immediately to the left of the water bar) as it animates width."""
         if not hasattr(self, "notes_column"):
             return
-        col_h = max(50, self.height() - self.button_height - self.button_gap)
+        col_h = max(50, self.height() - self.button_diameter - self.button_gap)
         x = self.width() - self.main_bar_width - current_width
         self.notes_column.setGeometry(x, 0, current_width, col_h)
 
@@ -179,6 +193,19 @@ class ProgressBarOverlay(QWidget):
         # Tween button scale toward target (snappy spring)
         if abs(self.button_anim_scale - self.button_anim_target) > 0.005:
             self.button_anim_scale += (self.button_anim_target - self.button_anim_scale) * 0.35
+
+        # Counter pop decay (quick spring back to 0)
+        if self.number_pop > 0:
+            self.number_pop *= 0.82
+            if self.number_pop < 0.01:
+                self.number_pop = 0.0
+
+        # Goal/level-up glow decay (slower than pop for celebratory dwell)
+        if self.goal_glow > 0:
+            self.goal_glow *= 0.97
+            if self.goal_glow < 0.02:
+                self.goal_glow = 0.0
+
         # Subtle idle "breathing" pulse to draw attention
         self.button_idle_pulse = math.sin(self.animation_tick * 0.05) * 0.5 + 0.5
 
@@ -226,16 +253,36 @@ class ProgressBarOverlay(QWidget):
         self.update()
 
     def _register_gulp(self, click_pos):
-        """Register a gulp from a manual click and trigger the dopamine microinteraction."""
+        """Register a gulp from a manual click and trigger the dopamine microinteraction.
+
+        Also updates GameStore (XP, level, streak, achievements). The events
+        from record_gulp are stored in self.recent_events so main.py can
+        surface them as tray notifications when handling gulp_registered.
+        """
         self.storage.add_gulp()
 
-        # Splash boost: temporarily increases wave amplitude
+        # Gamification — XP, level, achievements
+        events = {}
+        try:
+            ml, goal, pct = self.storage.get_progress()
+            daily_gulps = self.storage.get_glasses()
+            events = self.game_store.record_gulp(daily_gulps, pct)
+        except Exception as e:
+            print(f"[Game] Erro ao registrar gole: {e}")
+        self.recent_events = events
+
+        # Visual feedback — chunkier on celebratory events
         self.splash_boost = 1.0
+        self.number_pop = 1.0
+        if events.get("goal_hit_now") or events.get("leveled_up"):
+            self.goal_glow = 1.0
+            for _ in range(14):  # extra bubble burst on milestones
+                self.bubbles.append(Bubble(self.main_bar_width, self.height() - 10))
 
         # Ripple at click position (in widget coords)
         self.ripples.append({"x": float(click_pos.x()), "y": float(click_pos.y()), "age": 0})
 
-        # Bubble burst
+        # Standard bubble burst
         for _ in range(8):
             self.bubbles.append(Bubble(self.main_bar_width, self.height() - 10))
 
@@ -249,7 +296,7 @@ class ProgressBarOverlay(QWidget):
         painter.setOpacity(self.current_opacity)
 
         height = self.height()
-        bar_area_height = max(50, height - self.button_height - self.button_gap)
+        bar_area_height = max(50, height - self.button_diameter - self.button_gap)
         bar_x = self.width() - self.main_bar_width
 
         # Water bar (right edge)
@@ -258,10 +305,10 @@ class ProgressBarOverlay(QWidget):
         self._draw_main_bar(painter, self.main_bar_width, bar_area_height)
         painter.restore()
 
-        # Gulp button below the bar
+        # Big circular gulp button at the bottom-right
         self._draw_button(painter, self._button_rect())
 
-        # Click ripples (only used over the bar/button)
+        # Click ripples (rendered over the button)
         self._draw_ripples(painter)
 
     def _draw_main_bar(self, painter, width, height):
@@ -428,127 +475,171 @@ class ProgressBarOverlay(QWidget):
             painter.fillRect(0, water_top, int(width * 0.4), progress_height, reflection_gradient)
 
     def _button_rect(self) -> QRectF:
-        """Bounding rect of the big gulp button (in widget coords).
+        """Bounding square of the circular gulp button (in widget coords).
 
-        Lives directly under the water bar, sharing its x range."""
+        Sits at the bottom-right corner. May be wider than the water bar
+        (chunky button > thin bar) — extends leftward into the empty space
+        below the notes column."""
+        d = self.button_diameter
         return QRectF(
-            self.width() - self.main_bar_width,
-            self.height() - self.button_height,
-            self.main_bar_width,
-            self.button_height
+            self.width() - d,
+            self.height() - d,
+            d, d
         )
 
-    def _bar_area_rect(self) -> QRectF:
-        """Vertical strip of the water bar (above the button)."""
-        bar_area_height = max(50, self.height() - self.button_height - self.button_gap)
-        return QRectF(
-            self.width() - self.main_bar_width,
-            0,
-            self.main_bar_width,
-            bar_area_height
-        )
+    def _point_in_button(self, pos) -> bool:
+        """Click hit-test: inside the actual circle, not the bounding square."""
+        br = self._button_rect()
+        cx = br.center().x()
+        cy = br.center().y()
+        r = br.width() / 2
+        dx = pos.x() - cx
+        dy = pos.y() - cy
+        return (dx * dx + dy * dy) <= r * r
+
+    def _ring_color(self, percentage: float) -> QColor:
+        """Progress-ring color, scaling from cyan to blue to gold."""
+        if percentage < 30:
+            return QColor(120, 210, 255)   # light cyan
+        if percentage < 70:
+            return QColor(70, 175, 240)    # blue
+        if percentage < 100:
+            return QColor(40, 145, 230)    # deeper blue
+        return QColor(255, 215, 50)        # gold (goal hit)
 
     def _draw_button(self, painter, rect: QRectF):
-        """Draw the big chunky gulp button: water drop + plus, with hover/press states."""
-        # Inset so the button doesn't touch widget edges
-        inset = QRectF(
-            rect.x() + 1,
-            rect.y() + 4,
-            rect.width() - 2,
-            rect.height() - 8
-        )
+        """Circular dopamine button: glassy gradient + progress ring + counter."""
+        ml_total, goal_ml, percentage = self.storage.get_progress()
+        pct_norm = min(1.0, percentage / 100.0)
+        glasses = self.storage.get_glasses()
+        glow = self.goal_glow  # 0..1
 
-        # Apply press scale (anchor at center)
-        scale = self.button_anim_scale
-        if scale != 1.0:
-            cx = inset.center().x()
-            cy = inset.center().y()
-            new_w = inset.width() * scale
-            new_h = inset.height() * scale
-            inset = QRectF(cx - new_w / 2, cy - new_h / 2, new_w, new_h)
-
-        # Color palette by state
-        if self.button_pressed:
-            top_col = QColor(40, 110, 180)
-            bot_col = QColor(15, 60, 130)
-            border_col = QColor(160, 210, 255, 220)
-        elif self.button_hover:
-            top_col = QColor(130, 210, 255)
-            bot_col = QColor(60, 150, 230)
-            border_col = QColor(220, 240, 255, 230)
-        else:
-            top_col = QColor(90, 180, 235)
-            bot_col = QColor(40, 120, 200)
-            border_col = QColor(170, 215, 255, 200)
-
-        # Drop shadow (only when not pressed → "lifts off the surface")
-        if not self.button_pressed:
-            shadow_path = QPainterPath()
-            shadow_path.addRoundedRect(
-                inset.x() + 1, inset.y() + 4,
-                inset.width(), inset.height(),
-                14, 14
-            )
-            painter.fillPath(shadow_path, QColor(0, 0, 0, 110))
-
-        # Background gradient
-        gradient = QLinearGradient(inset.x(), inset.top(), inset.x(), inset.bottom())
-        gradient.setColorAt(0, top_col)
-        gradient.setColorAt(1, bot_col)
-
-        path = QPainterPath()
-        path.addRoundedRect(inset, 14, 14)
-        painter.fillPath(path, gradient)
-
-        # Idle pulse highlight (subtle, only when not interacting)
-        if not self.button_pressed and not self.button_hover:
-            pulse_alpha = int(40 + self.button_idle_pulse * 35)
-            pulse_grad = QLinearGradient(inset.x(), inset.top(), inset.x(), inset.center().y())
-            pulse_grad.setColorAt(0, QColor(255, 255, 255, pulse_alpha))
-            pulse_grad.setColorAt(1, QColor(255, 255, 255, 0))
-            painter.fillPath(path, pulse_grad)
-
-        # Border
-        painter.setPen(QPen(border_col, 1.5))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawPath(path)
-
-        # Water drop icon
+        # Apply press scale around center
+        s = self.button_anim_scale
+        cx0 = rect.center().x()
+        cy0 = rect.center().y()
+        d = min(rect.width(), rect.height()) * s
+        inset = QRectF(cx0 - d / 2, cy0 - d / 2, d, d)
         cx = inset.center().x()
-        cy = inset.center().y() + 2
-        drop_w = inset.width() * 0.55
-        drop_h = inset.height() * 0.62
-        top_y = cy - drop_h * 0.55
-        bot_y = cy + drop_h * 0.45
-        side = drop_w * 0.55
+        cy = inset.center().y()
 
-        drop_path = QPainterPath()
-        drop_path.moveTo(cx, top_y)
-        drop_path.cubicTo(
-            cx + side, top_y + drop_h * 0.35,
-            cx + side, bot_y - drop_h * 0.05,
-            cx, bot_y
-        )
-        drop_path.cubicTo(
-            cx - side, bot_y - drop_h * 0.05,
-            cx - side, top_y + drop_h * 0.35,
-            cx, top_y
-        )
-        drop_path.closeSubpath()
+        # ── 1. Drop shadow ────────────────────────────────────────────────
+        if not self.button_pressed:
+            shadow_offset = 4
+            shadow_path = QPainterPath()
+            shadow_path.addEllipse(inset.translated(0, shadow_offset))
+            painter.fillPath(shadow_path, QColor(0, 0, 0, 130))
 
-        # Drop fill
-        drop_color = QColor(255, 255, 255, 235) if not self.button_pressed else QColor(255, 255, 255, 200)
-        painter.fillPath(drop_path, drop_color)
-        painter.setPen(QPen(QColor(255, 255, 255, 240), 1.2))
-        painter.drawPath(drop_path)
+        # ── 2. Outer glow (hover OR near-goal OR celebrating) ─────────────
+        glow_strength = 0.0
+        glow_color = QColor(0, 0, 0, 0)
+        if glow > 0:
+            glow_strength = max(glow_strength, glow)
+            glow_color = QColor(255, 215, 80, int(120 * glow))
+        elif self.button_hover:
+            glow_strength = 0.7
+            glow_color = QColor(180, 230, 255, 90)
+        elif percentage >= 90:
+            glow_strength = 0.5
+            glow_color = QColor(255, 215, 80, 70)
 
-        # "+" badge in upper area of the drop
-        plus_size = max(7.0, min(inset.width(), inset.height()) * 0.18)
-        plus_x = cx
-        plus_y = top_y + drop_h * 0.30
-        painter.setPen(QPen(QColor(30, 100, 180), 2.2))
-        painter.drawLine(int(plus_x - plus_size / 2), int(plus_y), int(plus_x + plus_size / 2), int(plus_y))
-        painter.drawLine(int(plus_x), int(plus_y - plus_size / 2), int(plus_x), int(plus_y + plus_size / 2))
+        if glow_strength > 0:
+            gg_rect = QRectF(
+                cx - d * 0.95, cy - d * 0.95,
+                d * 1.9, d * 1.9
+            )
+            gg = QRadialGradient(QPointF(cx, cy), d * 0.95)
+            gg.setColorAt(0.45, glow_color)
+            gg.setColorAt(1.0, QColor(0, 0, 0, 0))
+            painter.setBrush(gg)
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(gg_rect)
+
+        # ── 3. Body — radial gradient (glassy 3D look) ────────────────────
+        if self.button_pressed:
+            top = QColor(50, 120, 180)
+            bot = QColor(20, 60, 110)
+        elif self.button_hover:
+            top = QColor(120, 210, 255)
+            bot = QColor(50, 140, 220)
+        else:
+            top = QColor(90, 180, 240)
+            bot = QColor(35, 120, 210)
+        body_grad = QRadialGradient(QPointF(cx - d * 0.22, cy - d * 0.28), d * 0.85)
+        body_grad.setColorAt(0, top)
+        body_grad.setColorAt(1, bot)
+        painter.setBrush(body_grad)
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(inset)
+
+        # ── 4. Progress ring (background full circle + colored arc) ───────
+        ring_w = max(5, int(d * 0.08))
+        ring_pad = ring_w / 2 + 1
+        ring_rect = inset.adjusted(ring_pad, ring_pad, -ring_pad, -ring_pad)
+
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(QColor(0, 0, 0, 90), ring_w, Qt.SolidLine, Qt.FlatCap))
+        painter.drawArc(ring_rect, 0, 360 * 16)
+
+        if percentage > 0:
+            ring_color = self._ring_color(percentage)
+            painter.setPen(QPen(ring_color, ring_w, Qt.SolidLine, Qt.RoundCap))
+            # Start at 12 o'clock (Qt: 90°); negative span = clockwise
+            painter.drawArc(ring_rect, 90 * 16, -int(360 * 16 * pct_norm))
+
+        # ── 5. Inner top highlight (glass shine) ──────────────────────────
+        if not self.button_pressed:
+            hl_rect = QRectF(
+                inset.x() + d * 0.18,
+                inset.y() + d * 0.10,
+                d * 0.64,
+                d * 0.42
+            )
+            hl_path = QPainterPath()
+            hl_path.addEllipse(hl_rect)
+            hl_grad = QLinearGradient(0, hl_rect.top(), 0, hl_rect.bottom())
+            alpha = 120 + int(self.button_idle_pulse * 40)
+            hl_grad.setColorAt(0, QColor(255, 255, 255, alpha))
+            hl_grad.setColorAt(1, QColor(255, 255, 255, 0))
+            painter.fillPath(hl_path, hl_grad)
+
+        # ── 6. Counter (today's gulps) ────────────────────────────────────
+        # Base font scales with diameter; pop animation grows it briefly.
+        base_size = max(11, int(d * 0.38))
+        pop_scale = 1.0 + self.number_pop * 0.30
+        font_size = max(11, int(base_size * pop_scale))
+
+        font = QFont("Segoe UI", font_size, QFont.Bold)
+        painter.setFont(font)
+        text = str(glasses)
+
+        # Soft text shadow
+        painter.setPen(QColor(0, 0, 0, 160))
+        painter.drawText(inset.translated(1, 2), Qt.AlignCenter, text)
+        # Fill — gold during goal_glow, white otherwise
+        if glow > 0.05:
+            text_color = QColor(
+                255,
+                int(255 - 30 * glow),
+                int(150 - 100 * glow),
+                250
+            )
+        else:
+            text_color = QColor(255, 255, 255, 250)
+        painter.setPen(text_color)
+        painter.drawText(inset, Qt.AlignCenter, text)
+
+        # ── 7. Small "Lv. N" label under the counter (tiny, soft) ─────────
+        try:
+            level = self.game_store.level()
+        except Exception:
+            level = 1
+        lvl_size = max(8, int(d * 0.14))
+        lvl_font = QFont("Segoe UI", lvl_size, QFont.DemiBold)
+        painter.setFont(lvl_font)
+        lvl_rect = QRectF(inset.x(), cy + d * 0.20, inset.width(), d * 0.20)
+        painter.setPen(QColor(255, 255, 255, 180))
+        painter.drawText(lvl_rect, Qt.AlignCenter, f"Lv. {level}")
 
     def _draw_ripples(self, painter):
         """Draw radial ripples emanating from recent click positions."""
@@ -577,22 +668,25 @@ class ProgressBarOverlay(QWidget):
         self.update()
 
     def _is_in_bar_zone(self, pos) -> bool:
-        """True if pos is in the water bar / gulp button strip (not the
-        transparent area reserved for the notes column)."""
+        """True if pos hits an interactive area: water bar strip or the
+        circular gulp button. Everything else (the empty/transparent space
+        reserved for the notes column) is non-interactive at the overlay
+        level — the notes column is a child widget with its own events."""
         bar_x = self.width() - self.main_bar_width
-        return pos.x() >= bar_x
+        if pos.x() >= bar_x:
+            return True
+        return self._point_in_button(pos)
 
     def mousePressEvent(self, event):
-        """Press on button arms a gulp; press on bar arms a drag.
-        Clicks in the transparent left area are ignored (notes column
-        owns those, or they're truly empty when the column is collapsed)."""
+        """Press on the button arms a gulp; press on the bar arms a drag.
+        Clicks in the transparent left area are ignored."""
         if not self._is_in_bar_zone(event.pos()):
-            return  # let the click die quietly
+            return
         if event.button() == Qt.LeftButton:
             self.click_start_global = event.globalPos()
             self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
             self.dragging_real = False
-            self.press_in_button = self._button_rect().contains(event.pos())
+            self.press_in_button = self._point_in_button(event.pos())
             if self.press_in_button:
                 self.button_pressed = True
                 self.button_anim_target = 0.92  # squish on press
@@ -603,8 +697,7 @@ class ProgressBarOverlay(QWidget):
 
     def mouseMoveEvent(self, event):
         """Update hover; once moved past threshold over the bar, treat as drag."""
-        # Hover state for the button (works even without buttons pressed thanks to setMouseTracking)
-        in_btn = self._button_rect().contains(event.pos())
+        in_btn = self._point_in_button(event.pos())
         if in_btn != self.button_hover:
             self.button_hover = in_btn
             self.update()
@@ -639,7 +732,7 @@ class ProgressBarOverlay(QWidget):
             return
 
         if self.press_in_button:
-            released_in_button = self._button_rect().contains(event.pos())
+            released_in_button = self._point_in_button(event.pos())
             self.button_pressed = False
             self.button_anim_target = 1.0
             if released_in_button:
@@ -668,6 +761,10 @@ class ProgressBarOverlay(QWidget):
         menu.addAction(info_action)
 
         menu.addSeparator()
+
+        stats_action = QAction("📊 Estatísticas...", self)
+        stats_action.triggered.connect(self._open_stats)
+        menu.addAction(stats_action)
 
         new_note_action = QAction("📝 Nova nota...", self)
         new_note_action.triggered.connect(self._open_new_note)
@@ -728,6 +825,15 @@ class ProgressBarOverlay(QWidget):
         """Open the new-note dialog via the notes column."""
         if hasattr(self, "notes_column"):
             self.notes_column.create_new_note()
+
+    def _open_stats(self):
+        """Open the gamification stats dialog."""
+        try:
+            from game_ui import StatsDialog
+            dlg = StatsDialog(self.game_store, self.storage, parent=None)
+            dlg.exec_()
+        except Exception as e:
+            print(f"[Stats] Erro: {e}")
 
     def _reset_progress(self):
         """Reset today's progress"""
