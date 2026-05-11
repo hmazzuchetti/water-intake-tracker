@@ -9,7 +9,9 @@ Webcam detection / mascot / AI messages were removed during the
 import sys
 import os
 import time
-from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction
+import traceback
+import datetime
+from PyQt5.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QAction, QMessageBox
 from PyQt5.QtCore import QTimer, QSharedMemory
 from PyQt5.QtGui import QIcon
 
@@ -17,6 +19,44 @@ from config import CONFIG
 from storage import Storage
 from ui import ProgressBarOverlay
 from settings_ui import show_settings, load_user_config
+from version import __version__
+
+
+def get_user_data_dir() -> str:
+    """Per-user writable directory for logs and crash dumps.
+
+    On Windows this is %APPDATA%\\WaterIntakeTracker.
+    """
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    path = os.path.join(base, "WaterIntakeTracker")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _install_crash_handler():
+    """Capture any uncaught exception and write it to a log file. Without
+    this, .exe (windowed) crashes are invisible — stderr is discarded and
+    the process just disappears."""
+    log_path = os.path.join(get_user_data_dir(), "crash.log")
+
+    def _handler(exc_type, exc_value, exc_tb):
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n=== CRASH {datetime.datetime.now().isoformat()} (v{__version__}) ===\n")
+                traceback.print_exception(exc_type, exc_value, exc_tb, file=f)
+                f.write("\n")
+        except Exception:
+            pass
+        try:
+            QMessageBox.critical(
+                None, "Water Intake Tracker — erro inesperado",
+                f"Erro: {exc_value}\n\nLog salvo em:\n{log_path}"
+            )
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _handler
 
 
 def get_resource_path(relative_path):
@@ -261,6 +301,8 @@ def main():
     else:
         app_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(app_dir)
+
+    _install_crash_handler()
 
     try:
         app = WaterTrackerApp()

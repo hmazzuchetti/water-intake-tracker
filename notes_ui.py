@@ -323,7 +323,13 @@ class NoteEditDialog(QDialog):
         existing = _parse_iso(self.note.deadline)
         if existing:
             self.deadline_check.setChecked(True)
-            self.deadline_edit.setDateTime(QDateTime(existing))
+            # Build QDateTime safely from components — passing a Python
+            # datetime to QDateTime() works in some PyQt5 builds but not all,
+            # and on bundled PyInstaller .exes this is a common crash source.
+            self.deadline_edit.setDateTime(QDateTime(
+                existing.year, existing.month, existing.day,
+                existing.hour, existing.minute, existing.second
+            ))
         else:
             self.deadline_check.setChecked(False)
             self.deadline_edit.setDateTime(QDateTime.currentDateTime().addDays(1))
@@ -349,14 +355,18 @@ class NoteEditDialog(QDialog):
 
     def collect(self) -> Note:
         """Read fields into the Note instance and return it."""
-        self.note.title = self.title_edit.toPlainText().strip() if hasattr(self.title_edit, "toPlainText") else self.title_edit.text().strip()
+        self.note.title = self.title_edit.text().strip()
         self.note.body = self.body_edit.toPlainText().strip()
         for p, rb in self._priority_buttons.items():
             if rb.isChecked():
                 self.note.priority = p
                 break
         if self.deadline_check.isChecked():
-            self.note.deadline = self.deadline_edit.dateTime().toPyDateTime().isoformat(timespec="seconds")
+            # Build ISO string via QDateTime.toString — avoids relying on
+            # PyQt5's toPyDateTime() which behaves inconsistently across
+            # bundled vs source builds.
+            qdt = self.deadline_edit.dateTime()
+            self.note.deadline = qdt.toString("yyyy-MM-ddTHH:mm:ss")
         else:
             self.note.deadline = None
         return self.note
@@ -522,7 +532,10 @@ class NotesColumn(QWidget):
         self._open_dialog(Note(), creating=True)
 
     def _open_dialog(self, note: Note, creating: bool):
-        dlg = NoteEditDialog(note, parent=self.window())
+        # Parent intentionally None — the overlay uses Qt.Tool flags which
+        # can interfere with modal dialog focus and lifecycle on Windows.
+        # A standalone dialog is more predictable.
+        dlg = NoteEditDialog(note, parent=None)
         result = dlg.exec_()
         if dlg.delete_requested and not creating:
             self.store.delete(note.id)
