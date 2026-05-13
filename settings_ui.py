@@ -308,8 +308,6 @@ class SettingsDialog(QDialog):
     def _save_and_accept(self):
         self.config["goal_ml"] = self.goal_spin.value()
         self.config["ml_per_gulp"] = self.gulp_spin.value()
-        self.config["bar_position"] = "right" if self.position_combo.currentIndex() == 0 else "left"
-        self.config["bar_width"] = self.width_spin.value()
         self.config["ml_per_glass"] = self.glass_spin.value()
         self.config["ml_per_bottle"] = self.bottle_spin.value()
         self.config["sound_enabled"] = self.sound_check.isChecked()
