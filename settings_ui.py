@@ -54,7 +54,7 @@ def save_user_config(config: dict) -> bool:
     """Persist the user-tweakable subset of the config."""
     saveable_keys = [
         "goal_ml", "ml_per_gulp", "ml_per_glass", "ml_per_bottle",
-        "notes_visible",
+        "notes_visible", "overlay_x", "overlay_y",
         "sound_enabled", "gulp_volume",
         "start_with_windows", "first_run",
     ]

@@ -100,10 +100,9 @@ class ProgressBarOverlay(QWidget):
             self.notes_column.hide()
 
     def _setup_geometry(self):
-        """Position the overlay at the bottom-right corner of the screen,
-        sized to fit the gulp control + notes column."""
-        screen = QApplication.primaryScreen().geometry()
-
+        """Size the overlay and place it. Tries saved (x, y) from config
+        first; falls back to bottom-right of the screen *available* area
+        (which excludes the Windows taskbar). Always clamps to safe bounds."""
         gulp_w = self.gulp_control.width()
         gulp_h = self.gulp_control.height()
 
@@ -114,8 +113,10 @@ class ProgressBarOverlay(QWidget):
         total_w = notes_reserved_w + self.HORIZONTAL_GAP + gulp_w
         total_h = gulp_h
 
-        x = screen.width() - total_w - self.MARGIN_FROM_SCREEN
-        y = screen.height() - total_h - self.MARGIN_FROM_SCREEN
+        # Find target position: saved one, or default bottom-right of available area
+        saved_x = CONFIG.get("overlay_x", None)
+        saved_y = CONFIG.get("overlay_y", None)
+        x, y = self._compute_position(total_w, total_h, saved_x, saved_y)
 
         self.setGeometry(x, y, total_w, total_h)
 
@@ -125,6 +126,62 @@ class ProgressBarOverlay(QWidget):
         # Notes column starts at far-left of overlay
         self._relayout_notes_column(NotesColumn.COLLAPSED_WIDTH)
         self.notes_column.show() if self.notes_visible else self.notes_column.hide()
+
+    def _available_screen(self):
+        """Usable screen rect — excludes the Windows taskbar and reserved
+        system areas. Falls back to full geometry if unavailable."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return None
+        try:
+            return screen.availableGeometry()
+        except Exception:
+            return screen.geometry()
+
+    def _compute_position(self, w: int, h: int, saved_x, saved_y):
+        """Decide where to place the overlay. Honors saved coords if they
+        keep the overlay sufficiently on-screen; otherwise snaps to the
+        bottom-right of the available area."""
+        avail = self._available_screen()
+        if avail is None:
+            # Without screen info, just put it at 0,0 — won't crash.
+            return 0, 0
+
+        # Default bottom-right inside available area (taskbar respected).
+        default_x = avail.right() - w - self.MARGIN_FROM_SCREEN + 1
+        default_y = avail.bottom() - h - self.MARGIN_FROM_SCREEN + 1
+
+        if isinstance(saved_x, int) and isinstance(saved_y, int):
+            x, y = self._clamp_to_safe(saved_x, saved_y, w, h)
+            return x, y
+        return default_x, default_y
+
+    def _clamp_to_safe(self, x: int, y: int, w: int, h: int):
+        """Ensure at least 100×100 of the overlay stays inside the available
+        screen, even if user drags toward the edges."""
+        avail = self._available_screen()
+        if avail is None:
+            return x, y
+        VISIBLE_MIN = 100
+        min_x = avail.left() - (w - VISIBLE_MIN)
+        max_x = avail.right() - VISIBLE_MIN + 1
+        min_y = avail.top() - (h - VISIBLE_MIN)
+        max_y = avail.bottom() - VISIBLE_MIN + 1
+        x = max(min_x, min(x, max_x))
+        y = max(min_y, min(y, max_y))
+        return int(x), int(y)
+
+    def reset_position(self):
+        """Snap back to the default bottom-right corner of the available
+        screen area. Useful when the overlay ends up somewhere awkward."""
+        avail = self._available_screen()
+        if avail is None:
+            return
+        w, h = self.width(), self.height()
+        x = avail.right() - w - self.MARGIN_FROM_SCREEN + 1
+        y = avail.bottom() - h - self.MARGIN_FROM_SCREEN + 1
+        self.move(x, y)
+        self._save_position(x, y)
 
     def _relayout_notes_column(self, current_width: int):
         """Keep the notes column right-aligned to its reserved slot, just
@@ -257,11 +314,32 @@ class ProgressBarOverlay(QWidget):
             if moved >= self.click_drag_threshold:
                 self.dragging = True
         if self.dragging:
-            self.move(event.globalPos() - self.drag_position)
+            target = event.globalPos() - self.drag_position
+            x, y = self._clamp_to_safe(target.x(), target.y(),
+                                       self.width(), self.height())
+            self.move(x, y)
             event.accept()
 
     def mouseReleaseEvent(self, event):
+        if self.dragging:
+            # Persist the new position so next launch starts here.
+            self._save_position(self.x(), self.y())
         self.dragging = False
+
+    def _save_position(self, x: int, y: int):
+        """Persist overlay coordinates to user_config so they survive a
+        restart. Clamps first as a defensive measure."""
+        x, y = self._clamp_to_safe(x, y, self.width(), self.height())
+        try:
+            CONFIG["overlay_x"] = int(x)
+            CONFIG["overlay_y"] = int(y)
+            from settings_ui import load_user_config, save_user_config
+            cfg = load_user_config()
+            cfg["overlay_x"] = int(x)
+            cfg["overlay_y"] = int(y)
+            save_user_config(cfg)
+        except Exception as e:
+            print(f"[Overlay] Erro ao salvar posição: {e}")
 
     # ─── Context menu (right-click) ────────────────────────────────────
 
@@ -288,6 +366,10 @@ class ProgressBarOverlay(QWidget):
         )
         toggle_notes_action.triggered.connect(self._toggle_notes_visibility)
         menu.addAction(toggle_notes_action)
+
+        reset_pos_action = QAction("📍 Resetar posição", self)
+        reset_pos_action.triggered.connect(self.reset_position)
+        menu.addAction(reset_pos_action)
 
         menu.addSeparator()
 

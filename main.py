@@ -254,6 +254,10 @@ class WaterTrackerApp:
         stats_action.triggered.connect(self._open_stats)
         tray_menu.addAction(stats_action)
 
+        reset_pos_action = QAction("📍 Resetar posição", self.app)
+        reset_pos_action.triggered.connect(self._reset_overlay_position)
+        tray_menu.addAction(reset_pos_action)
+
         self.visibility_action = QAction("Esconder Barra", self.app)
         self.visibility_action.triggered.connect(self._toggle_overlay_visibility)
         tray_menu.addAction(self.visibility_action)
@@ -318,6 +322,19 @@ class WaterTrackerApp:
         else:
             self.overlay.show()
             self.visibility_action.setText("Esconder Barra")
+
+    def _reset_overlay_position(self):
+        """Bring the overlay back to its default corner (taskbar-safe)."""
+        if self.overlay is None:
+            return
+        try:
+            self.overlay.reset_position()
+            if not self.overlay.isVisible():
+                self.overlay.show()
+                if hasattr(self, "visibility_action"):
+                    self.visibility_action.setText("Esconder Barra")
+        except Exception as e:
+            print(f"[Tray] Reset posição falhou: {e}")
 
     def _open_stats(self):
         """Open the gamification stats dialog."""
