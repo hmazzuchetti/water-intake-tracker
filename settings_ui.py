@@ -53,8 +53,8 @@ def load_user_config() -> dict:
 def save_user_config(config: dict) -> bool:
     """Persist the user-tweakable subset of the config."""
     saveable_keys = [
-        "goal_ml", "ml_per_gulp",
-        "bar_position", "bar_width",
+        "goal_ml", "ml_per_gulp", "ml_per_glass", "ml_per_bottle",
+        "notes_visible",
         "sound_enabled", "gulp_volume",
         "start_with_windows", "first_run",
     ]
@@ -193,38 +193,41 @@ class SettingsDialog(QDialog):
         goal_group = QGroupBox("Daily Goal")
         goal_layout = QGridLayout(goal_group)
 
-        goal_layout.addWidget(QLabel("Target water intake:"), 0, 0)
+        goal_layout.addWidget(QLabel("Meta diária:"), 0, 0)
         self.goal_spin = QSpinBox()
         self.goal_spin.setRange(500, 10000)
         self.goal_spin.setSingleStep(100)
         self.goal_spin.setSuffix(" ml")
         goal_layout.addWidget(self.goal_spin, 0, 1)
 
-        goal_layout.addWidget(QLabel("ML por gole (clique do botão):"), 1, 0)
-        self.gulp_spin = QSpinBox()
-        self.gulp_spin.setRange(50, 500)
-        self.gulp_spin.setSingleStep(25)
-        self.gulp_spin.setSuffix(" ml")
-        goal_layout.addWidget(self.gulp_spin, 1, 1)
-
         layout.addWidget(goal_group)
 
-        # Appearance
-        appearance_group = QGroupBox("Appearance")
-        appearance_layout = QGridLayout(appearance_group)
+        # Gulp amounts (main button + satellites)
+        amounts_group = QGroupBox("Tamanhos de gole")
+        amounts_layout = QGridLayout(amounts_group)
 
-        appearance_layout.addWidget(QLabel("Bar position:"), 0, 0)
-        self.position_combo = QComboBox()
-        self.position_combo.addItems(["Right", "Left"])
-        appearance_layout.addWidget(self.position_combo, 0, 1)
+        amounts_layout.addWidget(QLabel("💧 Gole (botão principal):"), 0, 0)
+        self.gulp_spin = QSpinBox()
+        self.gulp_spin.setRange(25, 500)
+        self.gulp_spin.setSingleStep(25)
+        self.gulp_spin.setSuffix(" ml")
+        amounts_layout.addWidget(self.gulp_spin, 0, 1)
 
-        appearance_layout.addWidget(QLabel("Bar width:"), 1, 0)
-        self.width_spin = QSpinBox()
-        self.width_spin.setRange(20, 120)
-        self.width_spin.setSuffix(" px")
-        appearance_layout.addWidget(self.width_spin, 1, 1)
+        amounts_layout.addWidget(QLabel("🥤 Copo:"), 1, 0)
+        self.glass_spin = QSpinBox()
+        self.glass_spin.setRange(50, 1000)
+        self.glass_spin.setSingleStep(50)
+        self.glass_spin.setSuffix(" ml")
+        amounts_layout.addWidget(self.glass_spin, 1, 1)
 
-        layout.addWidget(appearance_group)
+        amounts_layout.addWidget(QLabel("🍶 Garrafa:"), 2, 0)
+        self.bottle_spin = QSpinBox()
+        self.bottle_spin.setRange(100, 2000)
+        self.bottle_spin.setSingleStep(50)
+        self.bottle_spin.setSuffix(" ml")
+        amounts_layout.addWidget(self.bottle_spin, 2, 1)
+
+        layout.addWidget(amounts_group)
 
         # Sound (checkbox + volume slider)
         sound_group = QGroupBox("Som")
@@ -248,11 +251,6 @@ class SettingsDialog(QDialog):
         sound_layout.addWidget(self.volume_label, 1, 2)
 
         layout.addWidget(sound_group)
-
-        # Note about restart
-        note = QLabel("⚠️ Mudanças em posição / largura aplicam após reiniciar o app.")
-        note.setStyleSheet("color: #888; font-size: 10px;")
-        layout.addWidget(note)
 
         layout.addStretch()
         return widget
@@ -299,11 +297,9 @@ class SettingsDialog(QDialog):
     def _load_values(self):
         self.goal_spin.setValue(self.config.get("goal_ml", 3000))
         self.gulp_spin.setValue(self.config.get("ml_per_gulp", 100))
+        self.glass_spin.setValue(self.config.get("ml_per_glass", 300))
+        self.bottle_spin.setValue(self.config.get("ml_per_bottle", 500))
 
-        position = self.config.get("bar_position", "right").lower()
-        self.position_combo.setCurrentIndex(0 if position == "right" else 1)
-
-        self.width_spin.setValue(self.config.get("bar_width", 30))
         self.sound_check.setChecked(self.config.get("sound_enabled", True))
         vol = int(self.config.get("gulp_volume", 50))
         self.volume_slider.setValue(vol)
@@ -314,6 +310,8 @@ class SettingsDialog(QDialog):
         self.config["ml_per_gulp"] = self.gulp_spin.value()
         self.config["bar_position"] = "right" if self.position_combo.currentIndex() == 0 else "left"
         self.config["bar_width"] = self.width_spin.value()
+        self.config["ml_per_glass"] = self.glass_spin.value()
+        self.config["ml_per_bottle"] = self.bottle_spin.value()
         self.config["sound_enabled"] = self.sound_check.isChecked()
         self.config["gulp_volume"] = self.volume_slider.value()
         self.config["first_run"] = False

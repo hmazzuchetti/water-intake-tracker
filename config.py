@@ -9,12 +9,17 @@ podem ainda existir em user_config.json antigos (são ignoradas).
 CONFIG = {
     # Daily goal
     "goal_ml": 3000,           # Daily target in ml
-    "ml_per_gulp": 100,        # ml counted per click on the gulp button
+
+    # Gulp amounts — main button = gulp; satellites = glass and bottle.
+    "ml_per_gulp": 100,        # default click of the main button
+    "ml_per_glass": 300,       # "copo" satellite
+    "ml_per_bottle": 500,      # "garrafa" satellite
 
     # UI
-    "bar_position": "right",   # "left" or "right"
-    "bar_width": 30,           # Width in pixels
-    "bar_margin": 0,           # Margin from screen edge (0 = glued to side)
+    "bar_position": "right",   # legacy; unused after v2.2.0 (overlay is fixed corner)
+    "bar_width": 30,           # legacy; unused after v2.2.0
+    "bar_margin": 0,           # legacy; unused after v2.2.0
+    "notes_visible": True,     # show notes column at startup
 
     # Sound
     "sound_enabled": True,

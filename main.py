@@ -211,7 +211,12 @@ class WaterTrackerApp:
         if new_config:
             self.config = new_config
             CONFIG.update(self.config)
-            # bar_width / bar_position changes still need an app restart.
+            # Live-applicable: gulp/glass/bottle amounts → update satellite tooltips
+            if self.overlay is not None:
+                try:
+                    self.overlay.reload_after_settings()
+                except Exception as e:
+                    print(f"[Settings] Erro ao recarregar overlay: {e}")
 
     def _setup_system_tray(self):
         """Setup system tray icon and menu"""
