@@ -3,7 +3,9 @@ import os
 
 icon_path = 'icon.ico' if os.path.exists('icon.ico') else 'NONE'
 
-datas = [('sounds', 'sounds'), ('data', 'data')]
+# data/ NAO entra no bundle (v2.3.0): sao dados pessoais do dev e o app
+# persiste em %APPDATA% quando frozen. So recursos estaticos aqui.
+datas = [('sounds', 'sounds')]
 
 
 a = Analysis(

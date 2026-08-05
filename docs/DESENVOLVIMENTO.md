@@ -23,11 +23,22 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 
 ## Features Planejadas/Backlog
 
-### Próxima Sessão (sugerido pelo council na Reformulação)
-- [ ] **CI/CD do .exe** — GitHub Actions builda + zipa o exe ao push de tag (paga juros compostos: toda mudança futura testada no executável real sem rodar `build_installer.py` na mão)
+### GATE (council 2026-08): 14 dias de uso real antes de QUALQUER item abaixo
+A v2.1/v2.2 shipou gamificação inteira com 0 dias de uso real — e o bug
+do achievement impossível passou 3 meses despercebido porque ninguém
+jogava. Regra nova: `data/game.json` (days_played, last_active_date) é o
+juiz. Sem ~14 dias de uso genuíno, o backlog fica congelado.
+
+### Depois do gate — priorizado pelo council
+- [ ] **Sparkline 7 dias** no StatsDialog (history.jsonl já alimenta)
+- [ ] **Streak freeze** estilo Duolingo (1 "gota de gelo" a cada 7 dias de streak, máx 2)
+- [ ] **XP proporcional ao volume** (1 XP / 10ml) — mata o exploit de fragmentar registros
+- [ ] **Gole dourado** (~10% de chance, 3x XP) — reward variável
+- [ ] **Dica de descoberta dos satélites** no primeiro uso (auto-expand 2s)
+- [ ] **QSS dark comum** pros 3 dialogs (Stats/Settings/NoteEdit)
 - [ ] **Bug do tray icon** não aparecer ao lado do relógio
-- [ ] **Reformular menu inteiro** (cosmético)
-- [ ] **Windows AppBar** — fazer a barra reservar espaço de tela, igual à barra de tarefas. Snippet pronto no [`REFORMULACAO.md`](REFORMULACAO.md)
+- [ ] **Registrar refills, não goles** (ideia Brian): clique no momento de encher a garrafa, fora do flow
+- [ ] **Windows AppBar** — snippet pronto no [`REFORMULACAO.md`](REFORMULACAO.md)
 
 ### Polish sticky notes (TODOs conscientemente adiados na Fase 3)
 - [ ] Edit inline (clica no card e edita ali mesmo, sem dialog)
@@ -37,16 +48,59 @@ Este projeto é um aplicativo pessoal de hidratação que usa visão computacion
 - [ ] Recurring notes (semanal, mensal)
 - [ ] Tela de notas completadas (histórico)
 
-### Ideias para o Futuro (válidas pós-reformulação)
-- [ ] **Histórico visual** — Gráfico dos últimos 7 dias de consumo
-- [ ] **Notificações de milestone** — Toast do Windows ao atingir 25/50/75/100% da meta
+### Ideias para o Futuro
 - [ ] **Estatísticas semanal/mensal** — Resumo de consumo
-- [ ] **Temas visuais** — Dark/light, cores customizáveis para a água
-- [ ] **Exportar dados** — CSV pra análise
+- [ ] **Temas visuais** — Dark/light, cores customizáveis
+- [ ] **Exportar dados** — CSV pra análise (history.jsonl já é semi-exportável)
 - [ ] **Meta adaptativa** — Ajustar baseado em peso/altura/atividade
-- [ ] **Streak / gamificação** — Glow dourado quando bate meta N dias seguidos
 
 ## Log de Desenvolvimento
+
+### 2026-08-05 — v2.3.0: Fundação + Cue (pós-council de 5 agentes)
+**Status:** ✅ COMPLETO
+
+**Contexto:** council multi-agente (produto, UX, engenharia, gamificação,
+advogado do diabo) diagnosticou por que o app parou de ser usado em
+13/05: settings modal bloqueante a cada boot, loop de hábito sem gatilho
+(a purga 2.0 removeu lembretes E webcam sem substituto), e dados sem
+memória histórica.
+
+**Fase 0 — Fundação:**
+- ✅ Settings dialog só no first run — startup silencioso (era o assassino nº 1)
+- ✅ Fix crítico notes_ui.py: `add_btn` + `refresh()` estavam DENTRO de
+  `_on_width_anim_tick` (bug de indentação) — coluna de notas nascia
+  vazia e era reconstruída ~17x por hover
+- ✅ `storage.get_progress()` sem cap de 100% — achievement "Camelo de
+  Volta" (200%) era matematicamente impossível
+- ✅ `_ensure_today()` único (eram 5 checks duplicados) + arquivamento
+  append-only em `data/history.jsonl` antes do reset diário
+- ✅ Dados no .exe migram pra `%APPDATA%\WaterIntakeTracker` (one-shot);
+  installer não shippa mais `data/*` nem apaga dados no uninstall;
+  spec não embute mais dados pessoais no bundle
+- ✅ `git rm --cached data/progress.json` + data/ no .gitignore
+- ✅ Streak stale zerada no load (StatsDialog não mente mais)
+- ✅ Undo desfaz XP (`revert_gulp`) — farm add→undo fechado
+- ✅ Versão única: build_installer.py injeta `/DMyAppVersion` no ISCC
+
+**Fase 1 — Cue ambiente + feedback no lugar certo:**
+- ✅ **Botão que seca**: dessatura de azul vivo a cinza-seco entre 45min
+  e 2h sem gole (lerp no paintEvent). Sem gole hoje = seco; meta batida
+  = vivo o resto do dia. Hover/press mantêm cor viva. Zero popup/som.
+- ✅ **EffectsLayer**: camada transparente POR CIMA dos widgets (ripples
+  antigos eram pintados atrás do botão — invisíveis). Ripple + texto
+  flutuante "+Nml" + celebrações ("Meta batida!", "Nível N!", conquistas)
+  escalonadas no próprio overlay. Tray toast virou fallback (overlay
+  escondido).
+- ✅ Tooltip no botão principal: "700 / 3000 ml — 23%"
+- ✅ Help tab reescrito pra UI real (descrevia a barra removida na 2.0)
+- ✅ Idioma unificado pt-BR (menu contexto, settings, dialogs)
+- ✅ Preview de som ao soltar o slider de volume
+
+**Fase 2 — A prova (agora é com o Henrique):**
+14 dias de uso real, zero features novas. O game.json decide o que vem
+depois.
+
+---
 
 ### 2026-05-11 — Reformulação 2.0 (limpeza + sticky notes)
 **Status:** ✅ COMPLETO — branch `refactor/cleanup-and-sticky-notes`

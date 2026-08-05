@@ -28,6 +28,17 @@ from PyQt5.QtGui import (
 import math
 
 
+def _lerp_color(a: QColor, b: QColor, t: float) -> QColor:
+    """Interpolação linear entre duas cores (t em 0..1)."""
+    t = max(0.0, min(1.0, t))
+    return QColor(
+        int(a.red() + (b.red() - a.red()) * t),
+        int(a.green() + (b.green() - a.green()) * t),
+        int(a.blue() + (b.blue() - a.blue()) * t),
+        int(a.alpha() + (b.alpha() - a.alpha()) * t),
+    )
+
+
 # ─── Icon drawing helpers ────────────────────────────────────────────────
 
 
@@ -397,6 +408,13 @@ class GulpButton(QWidget):
 
     DIAMETER = 84
 
+    # "Botão que seca" — cue ambiente de hidratação. Começa a dessaturar
+    # após DRY_START_MIN minutos sem gole e fica totalmente "seco" em
+    # DRY_FULL_MIN. Sem popup, sem som: só o estado visual comunicando
+    # "faz tempo" pela visão periférica.
+    DRY_START_MIN = 45.0
+    DRY_FULL_MIN = 120.0
+
     def __init__(self, storage, game_store, parent=None):
         super().__init__(parent)
         self.storage = storage
@@ -415,6 +433,26 @@ class GulpButton(QWidget):
         self.press_inside = False
 
     # ── Helpers ────────────────────────────────────────────────────────
+
+    def _dryness(self) -> float:
+        """0..1 — quanto o botão está 'seco' (tempo sem gole).
+
+        Regras: meta batida → nunca seca (dia vencido). Nenhum gole hoje
+        → totalmente seco (manhã começa convidando o primeiro gole)."""
+        try:
+            _, _, percentage = self.storage.get_progress()
+            if percentage >= 100:
+                return 0.0
+            mins = self.storage.minutes_since_last_gulp()
+        except Exception:
+            return 0.0
+        if mins is None:
+            return 1.0
+        if mins <= self.DRY_START_MIN:
+            return 0.0
+        if mins >= self.DRY_FULL_MIN:
+            return 1.0
+        return (mins - self.DRY_START_MIN) / (self.DRY_FULL_MIN - self.DRY_START_MIN)
 
     def _point_inside_circle(self, pos) -> bool:
         cx = self.width() / 2
@@ -476,6 +514,13 @@ class GulpButton(QWidget):
         pct_norm = min(1.0, percentage / 100.0)
         glasses = self.storage.get_glasses()
         glow = self.goal_glow
+        dry = self._dryness()
+
+        # Tooltip sempre com o dado que importa (o número central é contagem
+        # de cliques, ambíguo entre gole de 100ml e garrafa de 500ml).
+        tip = f"{ml_total} / {goal_ml} ml — {percentage:.0f}%"
+        if self.toolTip() != tip:
+            self.setToolTip(tip)
 
         rect = QRectF(0, 0, self.width(), self.height())
         inset = rect.adjusted(3, 3, -3, -3)
@@ -519,7 +564,9 @@ class GulpButton(QWidget):
             painter.setPen(Qt.NoPen)
             painter.drawEllipse(gg_rect)
 
-        # Body gradient
+        # Body gradient — em idle, dessatura conforme o tempo sem gole
+        # ("secando"). Hover/press mantêm as cores vivas: a atenção do
+        # usuário já chegou, o cue cumpriu o papel.
         if self.button_pressed:
             top = QColor(50, 120, 180)
             bot = QColor(20, 60, 110)
@@ -527,8 +574,8 @@ class GulpButton(QWidget):
             top = QColor(120, 210, 255)
             bot = QColor(50, 140, 220)
         else:
-            top = QColor(90, 180, 240)
-            bot = QColor(35, 120, 210)
+            top = _lerp_color(QColor(90, 180, 240), QColor(128, 142, 150), dry)
+            bot = _lerp_color(QColor(35, 120, 210), QColor(70, 84, 94), dry)
         body = QRadialGradient(
             QPointF(cx - d * 0.22, cy - d * 0.28), d * 0.85
         )
@@ -561,7 +608,8 @@ class GulpButton(QWidget):
             hl_path = QPainterPath()
             hl_path.addEllipse(hl)
             hl_grad = QLinearGradient(0, hl.top(), 0, hl.bottom())
-            alpha = 120 + int(self.button_idle_pulse * 40)
+            # Botão seco perde o brilho "molhado" — highlight esmaece junto
+            alpha = int((120 + self.button_idle_pulse * 40) * (1.0 - 0.65 * dry))
             hl_grad.setColorAt(0, QColor(255, 255, 255, alpha))
             hl_grad.setColorAt(1, QColor(255, 255, 255, 0))
             painter.fillPath(hl_path, hl_grad)

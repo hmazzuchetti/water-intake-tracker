@@ -31,3 +31,9 @@ models/
 # OS files
 Thumbs.db
 .DS_Store
+
+# Dados pessoais do usuario (progress/game/notes/history) — nunca versionar
+data/
+
+# Brain repo (memoria do Brian — repo git proprio, fora deste)
+brain/

@@ -24,9 +24,14 @@ from version import __version__
 
 
 def get_config_path():
-    """Return a writable path for the user config file."""
+    """Return a writable path for the user config file.
+
+    v2.3.0: no .exe o config mora em %APPDATA%\\WaterIntakeTracker —
+    ao lado do exe falhava silenciosamente em Program Files e o
+    uninstaller apagava. Em dev, continua no diretório do projeto."""
     if getattr(sys, 'frozen', False):
-        return os.path.join(os.path.dirname(sys.executable), "user_config.json")
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "WaterIntakeTracker", "user_config.json")
     return "user_config.json"
 
 
@@ -135,7 +140,7 @@ class SettingsDialog(QDialog):
         self.first_run = first_run
         self.config = load_user_config()
 
-        self.setWindowTitle("Water Intake Tracker - Settings")
+        self.setWindowTitle("Water Intake Tracker — Configurações")
         self.setMinimumWidth(420)
         self.setMinimumHeight(360)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -157,27 +162,27 @@ class SettingsDialog(QDialog):
         layout.addWidget(version_label)
 
         if self.first_run:
-            welcome = QLabel("Welcome! Let's configure your settings.")
+            welcome = QLabel("Bem-vindo! Vamos configurar o app.")
             welcome.setAlignment(Qt.AlignCenter)
             welcome.setStyleSheet("color: #666; margin-bottom: 10px;")
             layout.addWidget(welcome)
 
         tabs = QTabWidget()
-        tabs.addTab(self._create_general_tab(), "General")
-        tabs.addTab(self._create_help_tab(), "How to Use")
+        tabs.addTab(self._create_general_tab(), "Geral")
+        tabs.addTab(self._create_help_tab(), "Como usar")
         layout.addWidget(tabs)
 
         button_layout = QHBoxLayout()
-        self.start_windows_check = QCheckBox("Start with Windows")
+        self.start_windows_check = QCheckBox("Iniciar com o Windows")
         self.start_windows_check.setChecked(is_startup_enabled())
         button_layout.addWidget(self.start_windows_check)
         button_layout.addStretch()
 
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton("Cancelar")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
-        save_btn = QPushButton("Save && Start" if self.first_run else "Save")
+        save_btn = QPushButton("Salvar && Iniciar" if self.first_run else "Salvar")
         save_btn.setDefault(True)
         save_btn.clicked.connect(self._save_and_accept)
         save_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px 16px;")
@@ -190,7 +195,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Daily goal
-        goal_group = QGroupBox("Daily Goal")
+        goal_group = QGroupBox("Meta diária")
         goal_layout = QGridLayout(goal_group)
 
         goal_layout.addWidget(QLabel("Meta diária:"), 0, 0)
@@ -248,12 +253,44 @@ class SettingsDialog(QDialog):
         self.volume_slider.valueChanged.connect(
             lambda v: self.volume_label.setText(f"{v}%")
         )
+        # Preview: soltar o slider toca o som no volume escolhido — sem
+        # isso calibrar exigia salvar, fechar e clicar no botão pra ouvir.
+        self.volume_slider.sliderReleased.connect(self._preview_volume)
+        self._preview_effect = None
         sound_layout.addWidget(self.volume_label, 1, 2)
 
         layout.addWidget(sound_group)
 
         layout.addStretch()
         return widget
+
+    def _preview_volume(self):
+        """Toca o gulp.wav no volume atual do slider."""
+        sound_path = os.path.join(
+            CONFIG.get("sounds_dir", "sounds"), CONFIG.get("gulp_sound", "gulp.wav")
+        )
+        if getattr(sys, 'frozen', False):
+            bundled = os.path.join(sys._MEIPASS, sound_path)
+            if os.path.exists(bundled):
+                sound_path = bundled
+        if not os.path.exists(sound_path):
+            return
+        try:
+            from PyQt5.QtMultimedia import QSoundEffect
+            from PyQt5.QtCore import QUrl
+            if self._preview_effect is None:
+                self._preview_effect = QSoundEffect(self)
+                self._preview_effect.setSource(
+                    QUrl.fromLocalFile(os.path.abspath(sound_path))
+                )
+            self._preview_effect.setVolume(self.volume_slider.value() / 100.0)
+            self._preview_effect.play()
+        except Exception:
+            try:
+                import winsound
+                winsound.PlaySound(sound_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            except Exception:
+                pass
 
     def _create_help_tab(self) -> QWidget:
         widget = QWidget()
@@ -263,32 +300,53 @@ class SettingsDialog(QDialog):
         help_text.setOpenExternalLinks(True)
         help_text.setHtml("""
         <h3>🚀 Como usar</h3>
-        <p>O app fica como uma barra fina na lateral da tela. A barra mostra
-        o progresso de hidratação do dia, e tem um botão grande embaixo:
-        clique nele toda vez que você der um gole d'água.</p>
+        <p>O app é um botão circular no canto da tela. Clique nele toda vez
+        que der um gole d'água — o anel ao redor mostra o progresso do dia
+        e o número central conta os goles.</p>
 
-        <h3>📊 Barra de água</h3>
-        <p>Sobe conforme você clica o botão. Reseta automaticamente à meia-noite.</p>
-
-        <h3>🖱️ Controles do mouse</h3>
+        <h3>🛰️ Satélites (hover)</h3>
+        <p>Passe o mouse sobre o botão para revelar os atalhos:</p>
         <ul>
-            <li><b>Clique no botão (gota d'água):</b> registra gole</li>
-            <li><b>Clique e arrasta a barra:</b> move pra outra posição</li>
-            <li><b>Clique direito:</b> menu (adicionar/remover gole, reset, settings, sair)</li>
-            <li><b>Hover:</b> tooltip com status do dia</li>
+            <li><b>💧 Gole:</b> registra o valor do botão principal</li>
+            <li><b>🥤 Copo:</b> registra um copo (configurável)</li>
+            <li><b>🍶 Garrafa:</b> registra uma garrafa (configurável)</li>
+            <li><b>📝 Notas:</b> mostra/esconde a coluna de sticky notes</li>
         </ul>
 
-        <h3>🔧 System Tray</h3>
-        <p>Ícone na bandeja do sistema:</p>
+        <h3>🏜️ O botão "seca"</h3>
+        <p>Quanto mais tempo sem registrar um gole, mais o botão perde a cor
+        — de azul vivo a cinza-seco em ~2h. É o lembrete silencioso: sem
+        popup, sem som. Beber (e clicar) devolve a cor. Meta batida = botão
+        vivo pelo resto do dia.</p>
+
+        <h3>📝 Sticky notes</h3>
+        <p>Coluna à esquerda do botão, com 3 prioridades (Agora / Hoje /
+        Depois). Hover expande; "+" cria; clique num card edita; ✓ completa.</p>
+
+        <h3>🖱️ Mouse</h3>
         <ul>
-            <li><b>Clique simples:</b> mostra/esconde a barra</li>
+            <li><b>Clique no botão:</b> registra gole</li>
+            <li><b>Arrastar área vazia:</b> move o overlay (posição é salva)</li>
+            <li><b>Clique direito:</b> menu (estatísticas, desfazer, zerar,
+                configurações, sair)</li>
+        </ul>
+
+        <h3>🔧 Bandeja do sistema</h3>
+        <ul>
+            <li><b>Clique simples:</b> mostra/esconde o overlay</li>
             <li><b>Clique duplo:</b> abre Configurações</li>
             <li><b>Clique direito:</b> menu de contexto</li>
         </ul>
 
-        <h3>💾 Persistência</h3>
-        <p>O progresso do dia fica salvo em <code>data/progress.json</code> e
-        sobrevive a fechar/reabrir o app.</p>
+        <h3>🎮 Gamificação</h3>
+        <p>Cada gole vira XP; bater a meta rende bônus e estende a streak.
+        Estatísticas e conquistas ficam no menu (📊 Estatísticas).</p>
+
+        <h3>💾 Dados</h3>
+        <p>No .exe instalado, tudo fica em
+        <code>%APPDATA%\\WaterIntakeTracker</code> — sobrevive a atualizações
+        e reinstalações. O dia reseta à meia-noite e o histórico diário é
+        arquivado em <code>history.jsonl</code>.</p>
         """)
         layout.addWidget(help_text)
 
@@ -318,8 +376,9 @@ class SettingsDialog(QDialog):
         if not save_user_config(self.config):
             QMessageBox.warning(
                 self,
-                "Save Error",
-                "Could not save configuration file. Settings will be used for this session only."
+                "Erro ao salvar",
+                "Não foi possível salvar o arquivo de configuração. "
+                "As escolhas valem só para esta sessão."
             )
 
         try:

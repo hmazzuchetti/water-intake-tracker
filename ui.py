@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QPoint, QPointF, QTimer, pyqtSignal, QRectF
 from PyQt5.QtGui import (
-    QPainter, QColor, QPen, QPainterPath
+    QPainter, QColor, QPen, QPainterPath, QFont
 )
 
 from config import CONFIG
@@ -26,6 +26,93 @@ from notes import NotesStore
 from notes_ui import NotesColumn
 from game import GameStore
 from gulp_control_ui import GulpControlWidget
+
+
+class EffectsLayer(QWidget):
+    """Camada transparente por CIMA de todos os widgets do overlay.
+
+    Existe porque um paintEvent do pai desenha ATRÁS dos filhos — os
+    ripples antigos cresciam escondidos embaixo do botão. Aqui vivem:
+    ripples de clique, textos flutuantes ("+300 ml") e celebrações
+    (level-up, conquista, meta batida). Transparente pra mouse."""
+
+    RIPPLE_MAX_AGE = 25
+    TEXT_MAX_AGE = 36        # ~1.8s a 20fps
+    TEXT_RISE_PX = 34
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.ripples = []   # {x, y, age}
+        self.texts = []     # {text, x, y, age, color, size, bold}
+
+    def add_ripple(self, x: float, y: float):
+        self.ripples.append({"x": float(x), "y": float(y), "age": 0})
+
+    def add_text(self, text: str, x: float, y: float,
+                 color: QColor = None, size: int = 11,
+                 bold: bool = True, delay_ticks: int = 0):
+        """Texto que sobe e esvanece a partir de (x, y). delay_ticks
+        atrasa a aparição (pra empilhar celebrações sem sobreposição)."""
+        self.texts.append({
+            "text": text,
+            "x": float(x), "y": float(y),
+            "age": -int(delay_ticks),
+            "color": color or QColor(255, 255, 255),
+            "size": size, "bold": bold,
+        })
+
+    def tick(self):
+        """Avança um frame (chamado pelo timer de 20fps do overlay)."""
+        if not self.ripples and not self.texts:
+            return
+        for r in self.ripples:
+            r["age"] += 1
+        self.ripples = [r for r in self.ripples if r["age"] < self.RIPPLE_MAX_AGE]
+        for t in self.texts:
+            t["age"] += 1
+        self.texts = [t for t in self.texts if t["age"] < self.TEXT_MAX_AGE]
+        self.update()
+
+    def paintEvent(self, event):
+        if not self.ripples and not self.texts:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        painter.setBrush(Qt.NoBrush)
+        for r in self.ripples:
+            progress = r["age"] / self.RIPPLE_MAX_AGE
+            radius = 6 + progress * 40
+            alpha = int(180 * (1.0 - progress))
+            if alpha <= 0:
+                continue
+            painter.setPen(QPen(QColor(180, 230, 255, alpha), 2))
+            painter.drawEllipse(QRectF(
+                r["x"] - radius, r["y"] - radius,
+                radius * 2, radius * 2
+            ))
+
+        for t in self.texts:
+            if t["age"] < 0:
+                continue  # ainda no delay
+            progress = t["age"] / self.TEXT_MAX_AGE
+            y = t["y"] - progress * self.TEXT_RISE_PX
+            alpha = int(255 * (1.0 - progress ** 1.5))
+            if alpha <= 0:
+                continue
+            font = QFont("Segoe UI", t["size"])
+            font.setBold(t["bold"])
+            painter.setFont(font)
+            rect = QRectF(t["x"] - 120, y - 14, 240, 28)
+            # Sombra pra legibilidade sobre qualquer fundo
+            painter.setPen(QColor(0, 0, 0, int(alpha * 0.7)))
+            painter.drawText(rect.translated(1, 1), Qt.AlignCenter, t["text"])
+            c = QColor(t["color"])
+            c.setAlpha(alpha)
+            painter.setPen(c)
+            painter.drawText(rect, Qt.AlignCenter, t["text"])
 
 
 class ProgressBarOverlay(QWidget):
@@ -59,10 +146,6 @@ class ProgressBarOverlay(QWidget):
         # Notes column visibility (persisted via in-memory state for now)
         self.notes_visible = bool(CONFIG.get("notes_visible", True))
 
-        # Click ripples (used over the main button area)
-        self.ripples = []
-        self.ripple_max_age = 25
-
         # Latest events from GameStore for main.py to surface as notifications
         self.recent_events: dict = {}
 
@@ -72,7 +155,7 @@ class ProgressBarOverlay(QWidget):
 
         self._animation_timer = QTimer(self)
         self._animation_timer.timeout.connect(self._animate)
-        self._animation_timer.start(50)  # 20 FPS — drives ripples only
+        self._animation_timer.start(50)  # 20 FPS — drives the effects layer
 
     # ─── Setup ─────────────────────────────────────────────────────────
 
@@ -98,6 +181,10 @@ class ProgressBarOverlay(QWidget):
 
         if not self.notes_visible:
             self.notes_column.hide()
+
+        # Effects layer — criado por último e sempre raise()d: precisa
+        # pintar POR CIMA do botão (ripples/textos flutuantes).
+        self.effects = EffectsLayer(self)
 
     def _setup_geometry(self):
         """Size the overlay and place it. Tries saved (x, y) from config
@@ -126,6 +213,10 @@ class ProgressBarOverlay(QWidget):
         # Notes column starts at far-left of overlay
         self._relayout_notes_column(NotesColumn.COLLAPSED_WIDTH)
         self.notes_column.show() if self.notes_visible else self.notes_column.hide()
+
+        # Effects layer cobre o overlay inteiro, acima de tudo
+        self.effects.setGeometry(0, 0, total_w, total_h)
+        self.effects.raise_()
 
     def _available_screen(self):
         """Usable screen rect — excludes the Windows taskbar and reserved
@@ -201,6 +292,7 @@ class ProgressBarOverlay(QWidget):
         if self.notes_visible:
             self.notes_column.show()
             self.notes_column.refresh()
+            self.effects.raise_()  # efeitos sempre por cima
         else:
             self.notes_column.hide()
         # Persist preference
@@ -237,47 +329,43 @@ class ProgressBarOverlay(QWidget):
         # Tell the button to animate
         self.gulp_control.trigger_gulp_animation(events)
 
-        # Ripple at the main button center (widget coords)
+        # Efeitos visuais no ponto do clique: ripple + "+Nml" flutuante +
+        # celebrações. Dopamina entregue onde o olho já está — o tray toast
+        # virou fallback pra quando o overlay está escondido (main.py).
         try:
-            btn_local_center = self.gulp_control.main_btn.geometry().center() + self.gulp_control.pos()
-            self.ripples.append({
-                "x": float(btn_local_center.x()),
-                "y": float(btn_local_center.y()),
-                "age": 0
-            })
-        except Exception:
-            pass
+            center = self.gulp_control.main_btn.geometry().center() + self.gulp_control.pos()
+            cx, cy = float(center.x()), float(center.y())
+            self.effects.add_ripple(cx, cy)
+            self.effects.add_text(f"+{ml} ml", cx, cy - 30,
+                                  QColor(180, 230, 255), size=11)
+
+            delay = 8  # celebrações entram escalonadas, depois do "+Nml"
+            if events.get("goal_hit_now"):
+                self.effects.add_text("Meta batida!", cx, cy - 46,
+                                      QColor(255, 215, 80), size=13,
+                                      delay_ticks=delay)
+                delay += 10
+            if events.get("leveled_up"):
+                self.effects.add_text(f"Nível {events.get('new_level', 0)}!",
+                                      cx, cy - 46, QColor(255, 215, 80),
+                                      size=13, delay_ticks=delay)
+                delay += 10
+            for ach in events.get("unlocked", []):
+                self.effects.add_text(
+                    f"{ach.get('icon', '')} {ach.get('name', 'Conquista')}",
+                    cx, cy - 46, QColor(255, 240, 160), size=12,
+                    delay_ticks=delay
+                )
+                delay += 10
+        except Exception as e:
+            print(f"[Effects] Erro: {e}")
 
         self.gulp_registered.emit()
 
-    # ─── Animation tick — just ripples now ─────────────────────────────
+    # ─── Animation tick — drives the effects layer ─────────────────────
 
     def _animate(self):
-        if self.ripples:
-            for r in self.ripples:
-                r["age"] += 1
-            self.ripples = [r for r in self.ripples if r["age"] < self.ripple_max_age]
-            self.update()
-
-    # ─── Paint — only ripples; children paint themselves ──────────────
-
-    def paintEvent(self, event):
-        if not self.ripples:
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(Qt.NoBrush)
-        for r in self.ripples:
-            progress = r["age"] / self.ripple_max_age
-            radius = 6 + progress * 40
-            alpha = int(180 * (1.0 - progress))
-            if alpha <= 0:
-                continue
-            painter.setPen(QPen(QColor(180, 230, 255, alpha), 2))
-            painter.drawEllipse(QRectF(
-                r["x"] - radius, r["y"] - radius,
-                radius * 2, radius * 2
-            ))
+        self.effects.tick()
 
     # ─── Window-level mouse: drag from empty area; right-click menu ────
 
@@ -373,11 +461,11 @@ class ProgressBarOverlay(QWidget):
 
         menu.addSeparator()
 
-        add_action = QAction("Add gulp (manual)", self)
+        add_action = QAction("Adicionar gole (manual)", self)
         add_action.triggered.connect(self._manual_add_gulp)
         menu.addAction(add_action)
 
-        undo_action = QAction("Undo last gulp", self)
+        undo_action = QAction("Desfazer último gole", self)
         undo_action.triggered.connect(self._undo_gulp)
         if self.storage.get_glasses() == 0:
             undo_action.setEnabled(False)
@@ -385,19 +473,19 @@ class ProgressBarOverlay(QWidget):
 
         menu.addSeparator()
 
-        reset_action = QAction("Reset today", self)
+        reset_action = QAction("Zerar o dia", self)
         reset_action.triggered.connect(self._reset_progress)
         menu.addAction(reset_action)
 
         menu.addSeparator()
 
-        settings_action = QAction("⚙️ Settings...", self)
+        settings_action = QAction("⚙️ Configurações...", self)
         settings_action.triggered.connect(self._open_settings)
         menu.addAction(settings_action)
 
         menu.addSeparator()
 
-        exit_action = QAction("Exit", self)
+        exit_action = QAction("Sair", self)
         exit_action.triggered.connect(QApplication.quit)
         menu.addAction(exit_action)
 
@@ -409,6 +497,12 @@ class ProgressBarOverlay(QWidget):
 
     def _undo_gulp(self):
         if self.storage.undo_gulp():
+            # Desfaz também o XP do gole — sem isso, add→undo em loop
+            # farmava XP infinito e o número virava mentira.
+            try:
+                self.game_store.revert_gulp()
+            except Exception as e:
+                print(f"[Game] Erro no revert: {e}")
             print("[UNDO] Removed last gulp")
             self.update()
             self.gulp_control.main_btn.update()

@@ -155,6 +155,24 @@ class GameStore:
             )
         except (json.JSONDecodeError, IOError, ValueError) as e:
             print(f"[Game] Erro ao carregar {self.path}: {e}")
+            return
+
+        self._expire_stale_streak()
+
+    def _expire_stale_streak(self) -> None:
+        """Se o último goal-hit foi antes de ontem, a streak morreu — zera
+        no load em vez de exibir um número morto até o próximo goal-hit.
+        (best_streak permanece; é o recorde, não o estado.)"""
+        if self.state.current_streak <= 0 or not self.state.last_goal_date:
+            return
+        try:
+            last_goal = date.fromisoformat(self.state.last_goal_date)
+        except ValueError:
+            return
+        yesterday = date.today() - timedelta(days=1)
+        if last_goal < yesterday:
+            self.state.current_streak = 0
+            self.save()
 
     def save(self) -> None:
         try:
@@ -267,6 +285,16 @@ class GameStore:
 
         self.save()
         return events
+
+    def revert_gulp(self) -> None:
+        """Desfaz o efeito básico de um gole (undo): -XP_PER_GULP e
+        -1 gole total. Limitação aceita: bônus de meta/streak e
+        achievements já destravados não são revertidos — o objetivo é
+        fechar o farm trivial de XP via add→undo, não contabilidade
+        perfeita."""
+        self.state.total_xp = max(0, self.state.total_xp - XP_PER_GULP)
+        self.state.total_gulps = max(0, self.state.total_gulps - 1)
+        self.save()
 
 
 # ─── Self-test ─────────────────────────────────────────────────────────────

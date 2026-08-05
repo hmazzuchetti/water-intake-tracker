@@ -10,7 +10,11 @@
 ;   Ou via linha de comando: iscc installer.iss
 
 #define MyAppName "Water Intake Tracker"
-#define MyAppVersion "2.2.2"
+; Versao injetada pelo build_installer.py via /DMyAppVersion=X.Y.Z
+; (fonte unica: version.py). O valor abaixo e so fallback pra build manual.
+#ifndef MyAppVersion
+  #define MyAppVersion "2.3.0"
+#endif
 #define MyAppPublisher "AI Drink Water"
 #define MyAppURL "https://github.com/hmazzuchetti/water-intake-tracker"
 #define MyAppExeName "WaterIntakeTracker.exe"
@@ -77,12 +81,10 @@ Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Pastas de recursos
 Source: "sounds\*"; DestDir: "{app}\sounds"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Pasta de dados (vazia inicialmente, criada pelo app)
-Source: "data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist
-
-; user_config.json não é shippado — settings_ui.py gera na primeira
-; execução com os defaults do config.py + escolhas do usuário no dialog
-; inicial. Shipar um seria sobrescrever / criar conflito de versionamento.
+; Dados do usuario NAO sao shippados (v2.3.0): o app persiste tudo em
+; %APPDATA%\WaterIntakeTracker (progress/game/notes/history/user_config).
+; Antes disso o installer distribuia o progress.json pessoal do dev e o
+; uninstaller apagava os dados do usuario — os dois problemas morrem aqui.
 
 [Icons]
 ; Menu Iniciar
@@ -100,10 +102,9 @@ Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: st
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Limpar arquivos gerados pelo app na desinstalacao
-Type: filesandordirs; Name: "{app}\data"
+; Limpar SO artefatos do app — dados do usuario vivem em %APPDATA% e
+; sobrevivem a desinstalacao/reinstalacao por design.
 Type: filesandordirs; Name: "{app}\__pycache__"
-Type: files; Name: "{app}\user_config.json"
 
 [Code]
 // Verificar se o app ja esta rodando antes de instalar/desinstalar

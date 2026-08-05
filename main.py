@@ -123,15 +123,19 @@ class WaterTrackerApp:
         self.tray_update_timer = None
 
     def _show_initial_settings(self) -> bool:
-        """Show settings dialog on every startup"""
+        """Load config silently; only show the settings dialog on the very
+        first run. Um app de ambiente não pode pedir permissão pra existir
+        a cada boot — o dialog fica acessível via tray/menu."""
         existing_config = load_user_config()
         first_run = existing_config.get("first_run", True)
 
-        print("Showing settings dialog...")
-        self.config = show_settings(first_run=first_run)
-
-        if self.config is None:
-            return False
+        if first_run:
+            print("First run — showing settings dialog...")
+            self.config = show_settings(first_run=True)
+            if self.config is None:
+                return False
+        else:
+            self.config = existing_config
 
         CONFIG.update(self.config)
         return True
@@ -180,9 +184,14 @@ class WaterTrackerApp:
         self._play_gulp_sound()
         self._update_tray_tooltip()
 
-        # Game feedback via tray
+        # Game feedback: o overlay celebra no próprio botão (EffectsLayer).
+        # Tray toast é só fallback pra quando a barra está escondida.
+        overlay_visible = self.overlay is not None and self.overlay.isVisible()
+        if overlay_visible or not self.tray_icon:
+            return
+
         events = getattr(self.overlay, "recent_events", {}) or {}
-        if events.get("leveled_up") and self.tray_icon:
+        if events.get("leveled_up"):
             new_lvl = events.get("new_level", 0)
             self.tray_icon.showMessage(
                 f"Nível {new_lvl}!",
@@ -190,13 +199,12 @@ class WaterTrackerApp:
                 QSystemTrayIcon.Information, 4000
             )
         for ach in events.get("unlocked", []):
-            if self.tray_icon:
-                self.tray_icon.showMessage(
-                    f"Conquista: {ach.get('name', 'Nova conquista')}",
-                    ach.get("desc", ""),
-                    QSystemTrayIcon.Information, 4000
-                )
-        if events.get("streak_extended") and self.tray_icon and self.game_store:
+            self.tray_icon.showMessage(
+                f"Conquista: {ach.get('name', 'Nova conquista')}",
+                ach.get("desc", ""),
+                QSystemTrayIcon.Information, 4000
+            )
+        if events.get("streak_extended") and self.game_store:
             streak = self.game_store.state.current_streak
             self.tray_icon.showMessage(
                 f"Streak {streak}!",
@@ -408,6 +416,38 @@ class WaterTrackerApp:
         print("Goodbye!")
 
 
+def _migrate_data_to_appdata():
+    """One-shot: instalações antigas guardavam tudo ao lado do .exe (onde o
+    uninstaller apagava e Program Files bloqueia escrita). Copia pro APPDATA
+    na primeira execução da versão nova; nunca sobrescreve destino existente."""
+    if not getattr(sys, 'frozen', False):
+        return
+    import shutil
+    exe_dir = os.path.dirname(sys.executable)
+    dest_root = get_user_data_dir()
+    dest_data = os.path.join(dest_root, "data")
+    os.makedirs(dest_data, exist_ok=True)
+
+    for name in ("progress.json", "game.json", "notes.json"):
+        src = os.path.join(exe_dir, "data", name)
+        dst = os.path.join(dest_data, name)
+        if os.path.exists(src) and not os.path.exists(dst):
+            try:
+                shutil.copy2(src, dst)
+                print(f"[Migrate] {name} -> APPDATA")
+            except OSError as e:
+                print(f"[Migrate] Falha ao copiar {name}: {e}")
+
+    src_cfg = os.path.join(exe_dir, "user_config.json")
+    dst_cfg = os.path.join(dest_root, "user_config.json")
+    if os.path.exists(src_cfg) and not os.path.exists(dst_cfg):
+        try:
+            shutil.copy2(src_cfg, dst_cfg)
+            print("[Migrate] user_config.json -> APPDATA")
+        except OSError as e:
+            print(f"[Migrate] Falha ao copiar user_config.json: {e}")
+
+
 def main():
     """Entry point"""
     if getattr(sys, 'frozen', False):
@@ -417,6 +457,7 @@ def main():
     os.chdir(app_dir)
 
     _install_crash_handler()
+    _migrate_data_to_appdata()
 
     try:
         app = WaterTrackerApp()

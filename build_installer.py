@@ -32,11 +32,13 @@ try:
 except ImportError:
     VERSION = "0.0.0"  # fallback if version.py missing
 
-# Pastas de recursos que precisam estar ao lado do exe
-RESOURCE_FOLDERS = ["sounds", "data"]
+# Pastas de recursos que precisam estar ao lado do exe.
+# data/ e user_config.json NAO entram (v2.3.0): sao dados pessoais e o
+# app frozen persiste tudo em %APPDATA%\WaterIntakeTracker.
+RESOURCE_FOLDERS = ["sounds"]
 
 # Arquivos adicionais
-RESOURCE_FILES = ["icon.ico", "user_config.json"]
+RESOURCE_FILES = ["icon.ico"]
 
 # Caminhos comuns do Inno Setup
 INNO_SETUP_PATHS = [
@@ -228,9 +230,12 @@ def build_installer():
     # Cria pasta de saida
     os.makedirs("installer_output", exist_ok=True)
 
-    # Compila
+    # Compila — injeta a versao do version.py (fonte unica) no script
     print("  Compilando instalador...")
-    result = subprocess.run([iscc, "installer.iss"], capture_output=True, text=True)
+    result = subprocess.run(
+        [iscc, f"/DMyAppVersion={VERSION}", "installer.iss"],
+        capture_output=True, text=True
+    )
 
     if result.returncode != 0:
         print("  [ERRO] Falha na compilacao do instalador!")

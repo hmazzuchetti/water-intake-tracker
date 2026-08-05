@@ -422,11 +422,6 @@ class NotesColumn(QWidget):
         self._collapse_timer.setInterval(180)
         self._collapse_timer.timeout.connect(lambda: self._set_expanded(False))
 
-    def _on_width_anim_tick(self, val):
-        w = int(val)
-        self.setMinimumWidth(w)
-        self.geometry_changed.emit(w)
-
         # The "+" button is anchored to the TOP of the column so it never
         # moves when cards expand on hover (which would otherwise create a
         # nasty hover-flicker loop).
@@ -456,6 +451,11 @@ class NotesColumn(QWidget):
         self.add_btn.clicked.connect(self._on_create)
 
         self.refresh()
+
+    def _on_width_anim_tick(self, val):
+        w = int(val)
+        self.setMinimumWidth(w)
+        self.geometry_changed.emit(w)
 
     # Public alias so the overlay context menu can trigger creation.
     def create_new_note(self):

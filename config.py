@@ -4,7 +4,24 @@ Configuration defaults for Water Intake Tracker.
 Pós-reformulação: webcam, IA, mascote, sub-barra de lembrete e
 detecção de reunião foram removidos. As chaves correspondentes
 podem ainda existir em user_config.json antigos (são ignoradas).
+
+Persistência (v2.3.0): quando rodando como .exe (frozen), os dados
+vivem em ``%APPDATA%/WaterIntakeTracker`` — fora do alcance do
+uninstaller e gravável mesmo com o app em Program Files. Em dev,
+continua ./data.
 """
+
+import os
+import sys
+
+
+def _resolve_data_dir() -> str:
+    """data/ local em dev; %APPDATA%\\WaterIntakeTracker\\data no .exe."""
+    if getattr(sys, 'frozen', False):
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "WaterIntakeTracker", "data")
+    return "data"
+
 
 CONFIG = {
     # Daily goal
@@ -16,9 +33,6 @@ CONFIG = {
     "ml_per_bottle": 500,      # "garrafa" satellite
 
     # UI
-    "bar_position": "right",   # legacy; unused after v2.2.0 (overlay is fixed corner)
-    "bar_width": 30,           # legacy; unused after v2.2.0
-    "bar_margin": 0,           # legacy; unused after v2.2.0
     "notes_visible": True,     # show notes column at startup
 
     # Sound
@@ -28,6 +42,7 @@ CONFIG = {
     "sounds_dir": "sounds",
 
     # Persistence
-    "data_dir": "data",
+    "data_dir": _resolve_data_dir(),
     "progress_file": "progress.json",
+    "history_file": "history.jsonl",   # append-only, um resumo por dia fechado
 }
